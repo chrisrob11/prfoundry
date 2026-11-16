@@ -43,8 +43,9 @@ func main() {
 func newApp(stderr io.Writer, rt job.Runtime) *cli.Command {
 	a := &app{stderr: stderr, rt: rt}
 	return &cli.Command{
-		Name:  "prf",
-		Usage: "run many PRs at once, each through a pipeline of Claude Code roles",
+		Name:    "prf",
+		Usage:   "run many PRs at once, each through a pipeline of Claude Code roles",
+		Version: buildVersion().String(),
 		// main prints errors and exits; the default handler would call os.Exit itself.
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
@@ -90,6 +91,7 @@ func newApp(stderr io.Writer, rt job.Runtime) *cli.Command {
 				Action: indexCmd,
 			},
 			a.configCmd(),
+			versionCmd(),
 		},
 	}
 }

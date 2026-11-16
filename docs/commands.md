@@ -14,6 +14,7 @@
 | [`prf role`, `prf pipeline`](#prf-role-prf-pipeline) | List, show and change roles and pipelines |
 | [`prf index`](#prf-index) | Build the codebase map for a checkout, without running Claude |
 | [`prf config`](#prf-config) | Show the settings in effect; `init` sets up the home |
+| [`prf version`](#prf-version) | prf's version, commit and build date |
 
 ## prf run
 
@@ -101,3 +102,8 @@ checkout (default: the current directory, into `./codebase-map`), without runnin
 the `conf.json` settings in effect, as JSON. `prf config init` writes a starter `conf.json`, the
 built-in roles and `claude-settings.json`, skipping any that already exist. See
 [configuration](configuration.md).
+
+## prf version
+
+`prf version`, or `prf --version`: print prf's version, the commit it was built from and when.
+A release build has them stamped in; a `go install …@vX.Y.Z` reads them from Go's build info.
