@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/atomicfile"
 )
 
 // A review gate (@review in a pipeline) stops the job and serves a review
@@ -330,7 +332,7 @@ func writeRound(dir string, r reviewRound) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return writeAtomic(filepath.Join(dir, fmt.Sprintf("round-%d.json", r.Round)), append(b, '\n'))
+	return atomicfile.Write(filepath.Join(dir, fmt.Sprintf("round-%d.json", r.Round)), append(b, '\n'))
 }
 
 // reviewServer serves the review page on localhost for one gate, under a
@@ -391,7 +393,7 @@ func startReviewServer(dir, repo, job string, activity func() string) (*reviewSe
 	b, _ := json.Marshal(link)
 	err := os.MkdirAll(dir, 0o755)
 	if err == nil {
-		err = writeAtomic(path, append(b, '\n'))
+		err = atomicfile.Write(path, append(b, '\n'))
 	}
 	if err != nil {
 		logf("saving the review page's URL: %v", err)

@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/atomicfile"
 	"github.com/urfave/cli/v3"
 )
 
@@ -111,7 +112,7 @@ func (j *job) setState(change func(s *jobState)) {
 	change(&j.state)
 	j.state.Branch, j.state.Dir, j.state.Updated = j.branch, j.dir, time.Now()
 	b, _ := json.MarshalIndent(j.state, "", "  ")
-	if err := writeAtomic(filepath.Join(j.jobDir, stateFile), append(b, '\n')); err != nil {
+	if err := atomicfile.Write(filepath.Join(j.jobDir, stateFile), append(b, '\n')); err != nil {
 		logf("writing %s: %v", stateFile, err)
 	}
 }

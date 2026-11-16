@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/atomicfile"
 	"github.com/urfave/cli/v3"
 )
 
@@ -194,7 +195,7 @@ func writePipelines(repo string, p pipelines) error {
 	if err := writeJSON(&b, p); err != nil {
 		return err
 	}
-	return writeAtomic(pipelinePath(repo), []byte(b.String()))
+	return atomicfile.Write(pipelinePath(repo), []byte(b.String()))
 }
 
 // pipelineRoles returns the steps of repo's pipeline name, or of its default
