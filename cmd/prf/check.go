@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/excerpt"
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // A check gate (@check in a pipeline) runs a command in the checkout, such
@@ -304,7 +305,7 @@ func (j *job) checkSandbox(tmp string) (string, error) {
 	}
 	if _, err := exec.LookPath(srtBinary); err != nil {
 		return "", fmt.Errorf("the job is sandboxed, so @%s runs its command in the same sandbox, with srt, and srt isn't installed: "+
-			"npm install -g @anthropic-ai/sandbox-runtime (or run the job with --sandbox=false)", gateCheck)
+			"npm install -g @anthropic-ai/sandbox-runtime (or run the job with --sandbox=false)", pipeline.GateCheck)
 	}
 	var s srtSettings
 	fs := claude.Sandbox.Filesystem

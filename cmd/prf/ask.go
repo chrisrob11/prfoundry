@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // An ask gate (@ask in a pipeline, right after a role) lets that role stop
@@ -157,7 +159,7 @@ func (j *job) askGate(p phase, step, model string, data promptData) int {
 // askView is the review page for an ask gate: the branch, and question.
 func (j *job) askView(p phase, path, question string, rounds []reviewRound, round int) reviewView {
 	v := j.reviewView(rounds, round)
-	v.Kind, v.Question, v.QFile, v.Asker = gateAsk, question, j.displayPath(path), p.asker.name
+	v.Kind, v.Question, v.QFile, v.Asker = pipeline.GateAsk, question, j.displayPath(path), p.asker.name
 	return v
 }
 

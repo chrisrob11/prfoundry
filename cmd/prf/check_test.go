@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // fakeSRT records its arguments, and the TMPDIR it got, in $FAKE_SRT_LOG,
@@ -41,8 +43,8 @@ func checkEnv(t *testing.T, gate, extra string) env {
 	e := newEnv(t, "")
 	captureStderr(t)
 	withFakeSRT(t)
-	writeRole(t, e.roles, gateFixRoles[gateCheck], "COMMIT fix-check on {{.Branch}}\n{{.Review}}")
-	writeFileT(t, filepath.Join(e.home, "origin", pipelineFile), `{"default": "a"`+extra+`, "pipelines": {"a": ["implement", `+gate+`, "review"]}}`)
+	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateCheck}.Fixer(), "COMMIT fix-check on {{.Branch}}\n{{.Review}}")
+	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "a"`+extra+`, "pipelines": {"a": ["implement", `+gate+`, "review"]}}`)
 	return e
 }
 
@@ -117,7 +119,7 @@ func TestCheckGateRunsOutOfRounds(t *testing.T) {
 	}
 
 	// A resume runs the command again, with a fresh set of fixes.
-	writeFileT(t, filepath.Join(e.home, "origin", pipelineFile), `{"default": "a", "pipelines": {"a": ["implement"]}}`)
+	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "a", "pipelines": {"a": ["implement"]}}`)
 	if code := e.run(t, "resume", "origin/b"); code != exitCheck {
 		t.Fatalf("resume: exit %d, want %d", code, exitCheck)
 	}
@@ -198,31 +200,31 @@ func TestRunCommandInterrupted(t *testing.T) {
 
 func TestCheckValidation(t *testing.T) {
 	for _, tt := range []struct {
-		s    step
+		s    pipeline.Step
 		want string
 	}{
-		{step{Gate: gateReview, Run: "make"}, "run is only for the @check gate"},
-		{step{Gate: gateAsk, Timeout: "1m"}, "timeout is only for the @check gate"},
-		{step{Gate: gateCheck, Timeout: "soon"}, `timeout "soon" isn't a duration`},
-		{step{Gate: gateCheck, Timeout: "-1m"}, `timeout "-1m" isn't a duration`},
-		{step{Role: "implement", Run: "make"}, "only for gates"},
-		{step{Gate: "deploy"}, "unknown gate @deploy; the gates are @review, @ask and @check"},
+		{pipeline.Step{Gate: pipeline.GateReview, Run: "make"}, "run is only for the @check gate"},
+		{pipeline.Step{Gate: pipeline.GateAsk, Timeout: "1m"}, "timeout is only for the @check gate"},
+		{pipeline.Step{Gate: pipeline.GateCheck, Timeout: "soon"}, `timeout "soon" isn't a duration`},
+		{pipeline.Step{Gate: pipeline.GateCheck, Timeout: "-1m"}, `timeout "-1m" isn't a duration`},
+		{pipeline.Step{Role: "implement", Run: "make"}, "only for gates"},
+		{pipeline.Step{Gate: "deploy"}, "unknown gate @deploy; the gates are @review, @ask and @check"},
 	} {
-		if err := checkGate(tt.s); err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("checkGate(%+v) = %v, want %q", tt.s, err, tt.want)
+		if err := pipeline.CheckGate(tt.s); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("CheckGate(%+v) = %v, want %q", tt.s, err, tt.want)
 		}
 	}
-	for _, s := range []step{{Gate: gateCheck, Run: "make", Timeout: "90s"}, {Gate: gateCheck}} {
-		if err := checkGate(s); err != nil {
-			t.Errorf("checkGate(%+v) = %v", s, err)
+	for _, s := range []pipeline.Step{{Gate: pipeline.GateCheck, Run: "make", Timeout: "90s"}, {Gate: pipeline.GateCheck}} {
+		if err := pipeline.CheckGate(s); err != nil {
+			t.Errorf("CheckGate(%+v) = %v", s, err)
 		}
 	}
-	steps := []step{{Role: "implement"}, {Gate: gateCheck}}
-	if err := checkCommands(steps, ""); err == nil || !strings.Contains(err.Error(), `step 2: @check has no command`) {
-		t.Errorf("checkCommands = %v", err)
+	steps := []pipeline.Step{{Role: "implement"}, {Gate: pipeline.GateCheck}}
+	if err := pipeline.CheckCommands(steps, ""); err == nil || !strings.Contains(err.Error(), `step 2: @check has no command`) {
+		t.Errorf("CheckCommands = %v", err)
 	}
-	if err := checkCommands(steps, "make test"); err != nil {
-		t.Errorf("checkCommands with the repo's = %v", err)
+	if err := pipeline.CheckCommands(steps, "make test"); err != nil {
+		t.Errorf("CheckCommands with the repo's = %v", err)
 	}
 
 	e := checkEnv(t, `"review"`, "")

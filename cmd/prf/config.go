@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
 
@@ -132,7 +133,7 @@ func loadConfig(ctx context.Context, c *cli.Command) (context.Context, error) {
 	if cfg, err = readConfig(filepath.Join(home, confFile)); err != nil {
 		return ctx, err
 	}
-	if cfg.Model != "" && !modelName.MatchString(cfg.Model) {
+	if cfg.Model != "" && !pipeline.ValidModel(cfg.Model) {
 		return ctx, fmt.Errorf("%s: invalid model %q", filepath.Join(home, confFile), cfg.Model)
 	}
 	return ctx, nil
@@ -171,7 +172,7 @@ func configuredRepos() []string {
 		if e.Name() == "roles" || !e.IsDir() {
 			continue
 		}
-		for _, f := range []string{pipelineFile, "roles"} {
+		for _, f := range []string{pipeline.FileName, "roles"} {
 			if _, err := os.Stat(filepath.Join(home, e.Name(), f)); err == nil {
 				repos = append(repos, e.Name())
 				break

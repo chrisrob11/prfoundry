@@ -5,99 +5,30 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // roles makes steps with no model.
-func roles(names ...string) []step {
-	steps := make([]step, len(names))
+func roles(names ...string) []pipeline.Step {
+	steps := make([]pipeline.Step, len(names))
 	for i, n := range names {
-		steps[i] = step{Role: n}
+		steps[i] = pipeline.Step{Role: n}
 	}
 	return steps
 }
 
-func TestParseRoleList(t *testing.T) {
-	got, err := parseRoleList("# header\nimplement:opus\n\n  perf-test  # benchmarks\ntest, review : haiku\n")
-	want := []step{{Role: "implement", Model: "opus"}, {Role: "perf-test"}, {Role: "test"}, {Role: "review", Model: "haiku"}}
-	if err != nil || !slices.Equal(got, want) {
-		t.Errorf("got %v, %v; want %v", got, err, want)
-	}
-	for _, bad := range []string{"implement:", "implement:bad model", "test:x/y"} {
-		if _, err := parseRoleList(bad); err == nil {
-			t.Errorf("parseRoleList(%q) should fail", bad)
-		}
-	}
-}
-
-func TestStepJSON(t *testing.T) {
-	var steps []step
-	if err := json.Unmarshal([]byte(`["implement", {"role": "review", "model": "haiku"}, {"role": "test", "max_cost": 2.5}]`), &steps); err != nil {
-		t.Fatal(err)
-	}
-	if want := []step{{Role: "implement"}, {Role: "review", Model: "haiku"}, {Role: "test", MaxCost: 2.5}}; !slices.Equal(steps, want) {
-		t.Errorf("decoded %v, want %v", steps, want)
-	}
-	b, _ := json.Marshal(steps)
-	if want := `["implement",{"role":"review","model":"haiku"},{"role":"test","max_cost":2.5}]`; string(b) != want {
-		t.Errorf("encoded %s, want %s (a step without a model stays a plain string)", b, want)
-	}
-	for _, bad := range []string{`[{"role": "x", "modle": "y"}]`, `[5]`} { //nolint:misspell // deliberate typo: tests unknown-field rejection
-		if json.Unmarshal([]byte(bad), &steps) == nil {
-			t.Errorf("%s should not decode", bad)
-		}
-	}
-}
-
-func TestPipelineRoles(t *testing.T) {
-	home = t.TempDir()
-	writeFileT(t, filepath.Join(home, "app", pipelineFile), `{"default": "feature", "pipelines": {"feature": ["implement", "review"], "empty": []}}`)
-	writeFileT(t, filepath.Join(home, "nodefault", pipelineFile), `{"pipelines": {"x": ["review"]}}`)
-	writeFileT(t, filepath.Join(home, "typo", pipelineFile), `{"defualt": "x", "pipelines": {}}`) //nolint:misspell // deliberate typo: tests unknown-field rejection
-
-	tests := []struct {
-		repo, name string
-		want       []step
-		wantErr    string
-	}{
-		{repo: "app", want: roles("implement", "review")},
-		{repo: "app", name: "feature", want: roles("implement", "review")},
-		{repo: "app", name: "nope", wantErr: `no pipeline "nope" (it has: empty, feature)`},
-		{repo: "app", name: "empty", wantErr: "lists no roles"},
-		{repo: "other", want: builtinPipeline},
-		{repo: "nodefault", wantErr: "no default pipeline"},
-		{repo: "typo", wantErr: `unknown field "defualt"`}, //nolint:misspell // deliberate typo: tests unknown-field rejection
-	}
-	for _, tt := range tests {
-		t.Run(tt.repo+"/"+tt.name, func(t *testing.T) {
-			got, _, err := pipelineRoles(tt.repo, tt.name)
-			if tt.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-					t.Fatalf("err = %v, want containing %q", err, tt.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !slices.Equal(got, tt.want) {
-				t.Errorf("got %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestPipelineCommand(t *testing.T) {
 	h := newHome(t)
-	path := filepath.Join(h, "app", pipelineFile)
+	path := filepath.Join(h, "app", pipeline.FileName)
 	pipe := func(stdin string, args ...string) (int, string) {
 		return prf(t, h, stdin, append([]string{"pipeline"}, args...)...)
 	}
-	saved := func() pipelines {
+	saved := func() pipeline.File {
 		t.Helper()
-		var p pipelines
+		var p pipeline.File
 		b, err := os.ReadFile(path)
 		if err != nil || json.Unmarshal(b, &p) != nil {
 			t.Fatalf("reading %s: %v", path, err)
@@ -123,7 +54,7 @@ func TestPipelineCommand(t *testing.T) {
 	if code, _ := pipe("", "set", "bugfix", "--repo", "app", "--roles", "implement,test"); code != 0 {
 		t.Fatalf("set bugfix: exit %d", code)
 	}
-	want := pipelines{Default: "feature", Pipelines: map[string][]step{
+	want := pipeline.File{Default: "feature", Pipelines: map[string][]pipeline.Step{
 		"feature": roles("implement", "perf", "test", "review"),
 		"bugfix":  roles("implement", "test"),
 	}}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/codeindex"
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
 
@@ -32,7 +33,7 @@ func indexCmd(ctx context.Context, c *cli.Command) error {
 // top of the folder, with a trailing / for directories, so every phase's
 // prompt can point at it without listing every package file.
 func (j *job) prepareContext() error {
-	p, _, err := readPipelines(j.name)
+	p, _, err := pipeline.Read(home, j.name)
 	if err != nil {
 		return err
 	}

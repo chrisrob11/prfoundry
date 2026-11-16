@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
 
@@ -34,33 +35,33 @@ const (
 )
 
 type jobState struct {
-	Repo       string    `json:"repo"`
-	Job        string    `json:"job"`
-	Branch     string    `json:"branch"`
-	Pipeline   string    `json:"pipeline,omitempty"`
-	Roles      []string  `json:"roles,omitempty"`
-	Models     []string  `json:"models,omitempty"` // each role's model; "" means Claude's default
-	Steps      []step    `json:"steps,omitempty"`  // the pipeline as given, with gate settings, for resume
-	State      string    `json:"state"`
-	Stage      string    `json:"stage"`              // a setup step, or the role running
-	Step       int       `json:"step"`               // 1-based position of that role; 0 during setup
-	Activity   string    `json:"activity,omitempty"` // Claude's latest tool call
-	Exit       *int      `json:"exit,omitempty"`
-	Pushed     bool      `json:"pushed,omitempty"`
-	PRURL      string    `json:"pr_url,omitempty"`
-	ReviewURL  string    `json:"review_url,omitempty"`  // the review page, while waiting at a review or ask gate
-	ResumeAt   time.Time `json:"resume_at,omitzero"`    // when a paused job re-runs its step
-	BaseCommit string    `json:"base_commit,omitempty"` // where the branch's changes start, for the review diff
-	PR         string    `json:"pr,omitempty"`          // the PR spec, for resume
-	Task       string    `json:"task,omitempty"`        // the --prompt, for resume
-	Push       bool      `json:"push,omitempty"`        // shipping settings, for resume
-	PRCreate   string    `json:"pr_create,omitempty"`
-	Cost       float64   `json:"cost"`
-	Dir        string    `json:"dir"`
-	JobDir     string    `json:"job_dir"`
-	PID        int       `json:"pid"`
-	Started    time.Time `json:"started"`
-	Updated    time.Time `json:"updated"`
+	Repo       string          `json:"repo"`
+	Job        string          `json:"job"`
+	Branch     string          `json:"branch"`
+	Pipeline   string          `json:"pipeline,omitempty"`
+	Roles      []string        `json:"roles,omitempty"`
+	Models     []string        `json:"models,omitempty"` // each role's model; "" means Claude's default
+	Steps      []pipeline.Step `json:"steps,omitempty"`  // the pipeline as given, with gate settings, for resume
+	State      string          `json:"state"`
+	Stage      string          `json:"stage"`              // a setup step, or the role running
+	Step       int             `json:"step"`               // 1-based position of that role; 0 during setup
+	Activity   string          `json:"activity,omitempty"` // Claude's latest tool call
+	Exit       *int            `json:"exit,omitempty"`
+	Pushed     bool            `json:"pushed,omitempty"`
+	PRURL      string          `json:"pr_url,omitempty"`
+	ReviewURL  string          `json:"review_url,omitempty"`  // the review page, while waiting at a review or ask gate
+	ResumeAt   time.Time       `json:"resume_at,omitzero"`    // when a paused job re-runs its step
+	BaseCommit string          `json:"base_commit,omitempty"` // where the branch's changes start, for the review diff
+	PR         string          `json:"pr,omitempty"`          // the PR spec, for resume
+	Task       string          `json:"task,omitempty"`        // the --prompt, for resume
+	Push       bool            `json:"push,omitempty"`        // shipping settings, for resume
+	PRCreate   string          `json:"pr_create,omitempty"`
+	Cost       float64         `json:"cost"`
+	Dir        string          `json:"dir"`
+	JobDir     string          `json:"job_dir"`
+	PID        int             `json:"pid"`
+	Started    time.Time       `json:"started"`
+	Updated    time.Time       `json:"updated"`
 
 	// Each role step's HEAD when it last finished, by step number, so a
 	// re-run can start from what changed since.

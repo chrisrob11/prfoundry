@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // fakeReviewer stands in for you at a review gate: each time the gate opens
@@ -52,7 +54,7 @@ const (
 func TestReviewGate(t *testing.T) {
 	e := newEnv(t, "")
 	captureStderr(t)
-	writeRole(t, e.roles, gateFixRoles[gateReview], "fix on {{.Branch}}\n{{.Review}}")
+	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateReview}.Fixer(), "fix on {{.Branch}}\n{{.Review}}")
 	urls := fakeReviewer(t, requestChanges, approve)
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "the task", "--role", "implement,@review:opus"); code != 0 {
@@ -107,7 +109,7 @@ func TestReviewGate(t *testing.T) {
 		t.Errorf("round-1.md = %q", md)
 	}
 	st := readState(t, jobDir)
-	if st.State != stateDone || st.ReviewURL != "" || st.BaseCommit == "" || len(st.Steps) != 2 || st.Steps[1].Gate != gateReview {
+	if st.State != stateDone || st.ReviewURL != "" || st.BaseCommit == "" || len(st.Steps) != 2 || st.Steps[1].Gate != pipeline.GateReview {
 		t.Errorf("state = %+v", st)
 	}
 }
@@ -115,8 +117,8 @@ func TestReviewGate(t *testing.T) {
 func TestReviewGateRunsOutOfRounds(t *testing.T) {
 	e := newEnv(t, "")
 	captureStderr(t)
-	writeRole(t, e.roles, gateFixRoles[gateReview], "fix {{.Review}}")
-	writeFileT(t, filepath.Join(e.home, "origin", pipelineFile), `{"default": "r", "pipelines": {"r": ["implement", {"gate": "review", "max_rounds": 1}]}}`)
+	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateReview}.Fixer(), "fix {{.Review}}")
+	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "r", "pipelines": {"r": ["implement", {"gate": "review", "max_rounds": 1}]}}`)
 	before := fakeReviewer(t, requestChanges, requestChanges)
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitReview {
@@ -268,42 +270,5 @@ func TestAddReplies(t *testing.T) {
 	got := []string{r.Comments[0].Reply, r.Comments[1].Reply, r.Comments[2].Reply}
 	if want := []string{"Renamed it.", "", "Kept it: callers need it."}; !slices.Equal(got, want) {
 		t.Errorf("replies = %q, want %q", got, want)
-	}
-}
-
-func TestGateSteps(t *testing.T) {
-	for text, want := range map[string]step{
-		"@review":      {Gate: gateReview},
-		"@review:opus": {Gate: gateReview, Model: "opus"},
-	} {
-		got, err := parseStep(text)
-		if err != nil || got != want || got.String() != text {
-			t.Errorf("parseStep(%q) = %+v, %v", text, got, err)
-		}
-	}
-
-	var steps []step
-	if err := json.Unmarshal([]byte(`["@review", {"gate": "review", "fix_role": "fixer", "max_rounds": 3}]`), &steps); err != nil {
-		t.Fatal(err)
-	}
-	if want := []step{{Gate: gateReview}, {Gate: gateReview, FixRole: "fixer", MaxRounds: 3}}; !slices.Equal(steps, want) {
-		t.Errorf("steps = %+v", steps)
-	}
-	if b, _ := json.Marshal(steps); string(b) != `["@review",{"gate":"review","fix_role":"fixer","max_rounds":3}]` {
-		t.Errorf("marshal = %s", b)
-	}
-
-	for _, tt := range []struct {
-		step step
-		want string
-	}{
-		{step{Gate: "lint"}, "unknown gate @lint"},
-		{step{Gate: gateReview, Role: "test"}, "a role or a gate"},
-		{step{Gate: gateReview, MaxRounds: -1}, "max_rounds can't be negative"},
-		{step{Role: "test", FixRole: "x"}, "only for gates"},
-	} {
-		if err := checkGate(tt.step); err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("checkGate(%+v) = %v, want %q", tt.step, err, tt.want)
-		}
 	}
 }

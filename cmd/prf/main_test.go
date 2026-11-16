@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
 
@@ -300,7 +301,7 @@ func TestApplyResumesRunClone(t *testing.T) {
 
 func TestRunWithPipelines(t *testing.T) {
 	e := newEnv(t, `"repos": {"app": "{{origin}}"}`)
-	writeFileT(t, filepath.Join(e.home, "app", pipelineFile), `{
+	writeFileT(t, filepath.Join(e.home, "app", pipeline.FileName), `{
   "default": "short",
   "pipelines": {"short": ["review"], "long": ["test", "implement", "review"]}
 }`)
@@ -432,7 +433,7 @@ func TestCodebaseContext(t *testing.T) {
 	}
 
 	// Setup commands run in the clone with PRF_CONTEXT, and their files are listed too.
-	writeFileT(t, filepath.Join(e.home, "app", pipelineFile), `{"pipelines": {}, "index": false,
+	writeFileT(t, filepath.Join(e.home, "app", pipeline.FileName), `{"pipelines": {}, "index": false,
 		"setup": ["git rev-parse --abbrev-ref HEAD > $PRF_CONTEXT/branch.txt"]}`)
 	if code := run("setup"); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -448,7 +449,7 @@ func TestCodebaseContext(t *testing.T) {
 	}
 
 	// A failing setup command stops the job before Claude runs.
-	writeFileT(t, filepath.Join(e.home, "app", pipelineFile), `{"pipelines": {}, "setup": ["exit 7"]}`)
+	writeFileT(t, filepath.Join(e.home, "app", pipeline.FileName), `{"pipelines": {}, "setup": ["exit 7"]}`)
 	if code := run("broken"); code != exitSetup {
 		t.Errorf("failing setup: exit %d, want %d", code, exitSetup)
 	}
@@ -699,7 +700,7 @@ func modelsUsed(t *testing.T, e env) []string {
 
 func TestStepModels(t *testing.T) {
 	e := newEnv(t, `"model": "sonnet", "repos": {"app": "{{origin}}", "plain": "{{origin}}"}`)
-	writeFileT(t, filepath.Join(e.home, "app", pipelineFile), `{
+	writeFileT(t, filepath.Join(e.home, "app", pipeline.FileName), `{
   "default": "feature",
   "model": "haiku",
   "pipelines": {"feature": [{"role": "implement", "model": "opus"}, "test", {"role": "review", "model": "claude-sonnet-5-5[1m]"}]}
@@ -754,7 +755,7 @@ func TestPipelineSetWithModels(t *testing.T) {
 	if code, out := prf(t, h, "", "pipeline", "set", "feature", "--repo", "app", "--roles", "implement:opus,test,review:haiku"); code != 0 {
 		t.Fatalf("set: %d %s", code, out)
 	}
-	b, _ := os.ReadFile(filepath.Join(h, "app", pipelineFile))
+	b, _ := os.ReadFile(filepath.Join(h, "app", pipeline.FileName))
 	if !strings.Contains(string(b), `{
         "role": "implement",
         "model": "opus"
@@ -787,7 +788,7 @@ func budgetsUsed(t *testing.T, e env) []string {
 
 func TestCostCaps(t *testing.T) {
 	e := newEnv(t, `"max_cost": 10, "repos": {"app": "{{origin}}"}`)
-	writeFileT(t, filepath.Join(e.home, "app", pipelineFile), `{
+	writeFileT(t, filepath.Join(e.home, "app", pipeline.FileName), `{
   "default": "default",
   "max_step_cost": 1,
   "pipelines": {"default": ["implement", {"role": "test", "max_cost": 2}, "review"]}

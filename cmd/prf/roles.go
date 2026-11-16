@@ -11,6 +11,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // builtinRoles are installed into home/roles by `prf config init`.
@@ -71,7 +73,7 @@ func roleDirs(repo string) []string {
 // loadPhases turns pipeline steps into phases. hasWork reports whether a PR
 // or task was given; hasTask whether a task was. An ask gate's asker is the
 // phase before it.
-func loadPhases(steps []step, dirs []string, hasWork, hasTask bool) ([]phase, error) {
+func loadPhases(steps []pipeline.Step, dirs []string, hasWork, hasTask bool) ([]phase, error) {
 	if len(steps) == 0 {
 		if !hasTask {
 			return nil, errors.New("give --prompt, --pipeline, --role, or a mix")
@@ -79,7 +81,7 @@ func loadPhases(steps []step, dirs []string, hasWork, hasTask bool) ([]phase, er
 		return []phase{{name: "prompt"}}, nil
 	}
 
-	if err := checkAskers(steps); err != nil {
+	if err := pipeline.CheckAskers(steps); err != nil {
 		return nil, err
 	}
 	var phases []phase
@@ -87,12 +89,12 @@ func loadPhases(steps []step, dirs []string, hasWork, hasTask bool) ([]phase, er
 		if s.Role == "implement" && !hasWork {
 			return nil, errors.New("role implement needs --pr or --prompt")
 		}
-		if err := checkGate(s); err != nil {
+		if err := pipeline.CheckGate(s); err != nil {
 			return nil, err
 		}
 		role := s.Role
 		if s.Gate != "" {
-			role = s.fixRole()
+			role = s.Fixer()
 		}
 		text, err := findRole(dirs, role)
 		if err != nil {
@@ -104,18 +106,18 @@ func loadPhases(steps []step, dirs []string, hasWork, hasTask bool) ([]phase, er
 		}
 		p.model, p.maxCost, p.expect = s.Model, s.MaxCost, s.Expect
 		if s.Gate != "" {
-			p.name, p.gate, p.fixRole = s.name(), s.Gate, role
+			p.name, p.gate, p.fixRole = s.Name(), s.Gate, role
 			p.maxRounds = s.MaxRounds
 			if p.maxRounds == 0 {
-				p.maxRounds = defaultMaxRounds
+				p.maxRounds = pipeline.DefaultMaxRounds
 			}
 		}
 		p.run = s.Run
 		if s.Timeout != "" {
-			p.timeout, _ = time.ParseDuration(s.Timeout) // checkGate parsed it
+			p.timeout, _ = time.ParseDuration(s.Timeout) // pipeline.CheckGate parsed it
 		}
-		if s.Gate == gateAsk {
-			p.question = firstNonEmpty(s.Question, defaultQuestion)
+		if s.Gate == pipeline.GateAsk {
+			p.question = firstNonEmpty(s.Question, pipeline.DefaultQuestion)
 			phases[len(phases)-1].asks = p.question
 			asker := phases[len(phases)-1]
 			p.asker = &asker

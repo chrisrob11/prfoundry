@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // A review gate (@review in a pipeline) stops the job and serves a review
@@ -229,7 +230,7 @@ func (j *job) reviewView(rounds []reviewRound, round int) reviewView {
 	head := gitOutput(j.dir, "rev-parse", "HEAD")
 	base := firstNonEmpty(j.state.BaseCommit, head)
 	v := reviewView{
-		Kind: gateReview, Repo: j.name, Job: filepath.Base(j.jobDir), Branch: j.branch, Pipeline: j.pipeline,
+		Kind: pipeline.GateReview, Repo: j.name, Job: filepath.Base(j.jobDir), Branch: j.branch, Pipeline: j.pipeline,
 		Round: round, Base: base, Head: head, Task: j.task, Rounds: make([]reviewRound, len(rounds)),
 		Dirty: gitOutput(j.dir, "status", "--porcelain") != "",
 		Diff:  gitOutput(j.dir, "diff", "--no-color", "--no-ext-diff", "-M", base, head),
@@ -490,7 +491,7 @@ func (s *reviewServer) serveSubmit(w http.ResponseWriter, r *http.Request) {
 // cleanSubmission checks a posted review, or answers to an ask gate's
 // question (kind), drops empty comments, and numbers the rest.
 func cleanSubmission(r *reviewRound, kind string) error {
-	if kind == gateAsk {
+	if kind == pipeline.GateAsk {
 		if r.Verdict != verdictAnswer && r.Verdict != verdictAccept && r.Verdict != verdictStop {
 			return fmt.Errorf("verdict must be %q, %q or %q", verdictAnswer, verdictAccept, verdictStop)
 		}
