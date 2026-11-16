@@ -10,10 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/claude"
+	"github.com/chrisrob11/prfoundry/internal/codeindex"
 	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/itemname"
 	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/opencode"
@@ -369,4 +372,17 @@ func resolvePR(p, prDir string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("PR file not found: %s (also looked in pr_dir %q)", p, prDir)
+}
+
+func indexCmd(ctx context.Context, c *cli.Command) error {
+	dir, err := filepath.Abs(c.String("dir"))
+	if err != nil {
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
+	}
+	start := time.Now()
+	if err := codeindex.Build(dir, filepath.Base(dir), firstNonEmpty(gitx.Output(dir, "branch", "--show-current"), "HEAD"), c.String("out")); err != nil {
+		return cli.Exit("prf: "+err.Error(), job.ExitSetup)
+	}
+	_, _ = fmt.Fprintf(c.Root().Writer, "wrote %s in %s\n", filepath.Join(c.String("out"), "index.md"), time.Since(start).Round(time.Millisecond))
+	return nil
 }
