@@ -1,0 +1,279 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/urfave/cli/v3"
+)
+
+// roleEntry describes one role as list and show report it.
+type roleEntry struct {
+	Name        string `json:"name"`
+	Scope       string `json:"scope"` // "repo" or "shared"
+	Path        string `json:"path"`
+	Description string `json:"description"`
+	Overrides   string `json:"overrides,omitempty"` // path of a shared role this repo role hides
+	Builtin     bool   `json:"builtin"`             // a built-in role of this name exists
+	Valid       bool   `json:"valid"`
+	Error       string `json:"error,omitempty"`
+	Content     string `json:"content,omitempty"` // show --json only
+}
+
+func roleCmd() *cli.Command {
+	repoFlag := &cli.StringFlag{Name: "repo", Usage: "work on this repo's roles (~/.prf/<repo>/roles) instead of the shared ones"}
+	jsonFlag := &cli.BoolFlag{Name: "json", Usage: "print JSON"}
+	return &cli.Command{
+		Name:  "role",
+		Usage: "list, show, and change roles; built for LLMs and scripts as well as people",
+		Description: "Roles are <name>.md Go templates that can use {{.PR}}, {{.Branch}}, {{.Task}} and,\n" +
+			"for a gate's fix role, {{.Review}}, and for an @ask gate's, {{.Question}}.\n" +
+			"Shared roles live in ~/.prf/roles; a repo's own roles in ~/.prf/<repo>/roles\n" +
+			"override shared ones of the same name. With --repo, list and show give what that\n" +
+			"repo would use, and set and remove change the repo's own roles.\n" +
+			"To change one: prf role show <name> > f; edit f; prf role set <name> --file f.\n" +
+			"set refuses a role that doesn't parse or renders an empty prompt, and leaves the file unchanged.",
+		Commands: []*cli.Command{
+			{Name: "list", Usage: "list roles with their scope, path, description and whether each is valid", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: roleList},
+			{Name: "show", Usage: "print the role prf would use", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: roleShow},
+			{Name: "set", Usage: "create or replace a role from --file or stdin, after validating it", ArgsUsage: "<name>",
+				Flags: []cli.Flag{repoFlag, &cli.StringFlag{Name: "file", Usage: "read from this file instead of stdin"}}, Action: roleSet},
+			{Name: "remove", Usage: "delete a role file", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag}, Action: roleRemove},
+			{Name: "reset", Usage: "restore a built-in role's original text in the shared roles", ArgsUsage: "<name>", Action: roleReset},
+		},
+	}
+}
+
+// listRoles returns the role prf would use for each name, for repo (or
+// only the shared roles when repo is empty), sorted by name.
+func listRoles(repo string) []roleEntry {
+	dirs := roleDirs(repo)
+	scopes := []string{"shared"}
+	if repo != "" {
+		scopes = []string{"repo", "shared"}
+	}
+	byName := map[string]*roleEntry{}
+	for i, dir := range dirs {
+		matches, _ := filepath.Glob(filepath.Join(dir, "*.md"))
+		for _, path := range matches {
+			name := strings.TrimSuffix(filepath.Base(path), ".md")
+			if e, ok := byName[name]; ok {
+				e.Overrides = path // the repo's role already won
+				continue
+			}
+			byName[name] = loadRoleEntry(name, scopes[i], path)
+		}
+	}
+	entries := make([]roleEntry, 0, len(byName))
+	for _, e := range byName {
+		entries = append(entries, *e)
+	}
+	slices.SortFunc(entries, func(a, b roleEntry) int { return strings.Compare(a.Name, b.Name) })
+	return entries
+}
+
+func loadRoleEntry(name, scope, path string) *roleEntry {
+	_, builtinErr := fs.Stat(builtinRoles, "roles/"+name+".md")
+	e := &roleEntry{Name: name, Scope: scope, Path: path, Builtin: builtinErr == nil}
+	b, err := os.ReadFile(path)
+	if err == nil {
+		e.Content = string(b)
+		e.Description = firstLine(e.Content)
+		err = validateRole(name, e.Content)
+	}
+	if err != nil {
+		e.Error = err.Error()
+	}
+	e.Valid = err == nil
+	return e
+}
+
+func findRoleEntry(repo, name string) *roleEntry {
+	for _, e := range listRoles(repo) {
+		if e.Name == name {
+			return &e
+		}
+	}
+	return nil
+}
+
+// firstLine returns text's first non-empty line without markdown heading marks.
+func firstLine(text string) string {
+	for line := range strings.SplitSeq(text, "\n") {
+		if line = strings.TrimSpace(strings.TrimLeft(line, "#")); line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+func roleList(ctx context.Context, c *cli.Command) error {
+	repo, err := optionalRepo(c)
+	if err != nil {
+		return err
+	}
+	entries := listRoles(repo)
+	w := c.Root().Writer
+	if c.Bool("json") {
+		for i := range entries {
+			entries[i].Content = ""
+		}
+		return writeJSON(w, entries)
+	}
+	if len(entries) == 0 {
+		_, _ = fmt.Fprintf(w, "no roles in %s (prf config init installs the built-in roles)\n", strings.Join(roleDirs(repo), " or "))
+		return nil
+	}
+	for _, e := range entries {
+		status := ""
+		if !e.Valid {
+			status = "  INVALID: " + e.Error
+		}
+		if e.Overrides != "" {
+			status += "  (overrides " + e.Overrides + ")"
+		}
+		_, _ = fmt.Fprintf(w, "%-12s %-6s %s%s\n", e.Name, e.Scope, e.Description, status)
+	}
+	return nil
+}
+
+func roleShow(ctx context.Context, c *cli.Command) error {
+	repo, name, err := repoAndRoleName(c)
+	if err != nil {
+		return err
+	}
+	e := findRoleEntry(repo, name)
+	if e == nil {
+		return cli.Exit(fmt.Sprintf("prf: no role %q in %s", name, strings.Join(roleDirs(repo), " or ")), exitUsage)
+	}
+	if c.Bool("json") {
+		return writeJSON(c.Root().Writer, e)
+	}
+	_, err = io.WriteString(c.Root().Writer, e.Content)
+	return err
+}
+
+func roleSet(ctx context.Context, c *cli.Command) error {
+	repo, name, err := repoAndRoleName(c)
+	if err != nil {
+		return err
+	}
+	var text []byte
+	if f := c.String("file"); f != "" {
+		text, err = os.ReadFile(f)
+	} else {
+		text, err = io.ReadAll(c.Root().Reader)
+	}
+	if err != nil {
+		return cli.Exit("prf: reading role: "+err.Error(), exitUsage)
+	}
+	if err := validateRole(name, string(text)); err != nil {
+		return cli.Exit("prf: not saved: "+err.Error(), exitUsage)
+	}
+	path := filepath.Join(roleDirs(repo)[0], name+".md")
+	if err := writeAtomic(path, text); err != nil {
+		return cli.Exit("prf: "+err.Error(), exitSetup)
+	}
+	_, _ = fmt.Fprintf(c.Root().Writer, "saved role %s %s\n", name, path)
+	return nil
+}
+
+func roleRemove(ctx context.Context, c *cli.Command) error {
+	repo, name, err := repoAndRoleName(c)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(roleDirs(repo)[0], name+".md")
+	if err := os.Remove(path); errors.Is(err, fs.ErrNotExist) {
+		return cli.Exit(fmt.Sprintf("prf: no role %q at %s", name, path), exitUsage)
+	} else if err != nil {
+		return cli.Exit("prf: "+err.Error(), exitSetup)
+	}
+	w := c.Root().Writer
+	_, _ = fmt.Fprintf(w, "removed role %s %s\n", name, path)
+	if e := findRoleEntry(repo, name); e != nil {
+		_, _ = fmt.Fprintf(w, "%s now resolves to %s\n", name, e.Path)
+	}
+	return nil
+}
+
+func roleReset(ctx context.Context, c *cli.Command) error {
+	name, err := nameArg(c, "role")
+	if err != nil {
+		return err
+	}
+	b, err := fs.ReadFile(builtinRoles, "roles/"+name+".md")
+	if err != nil {
+		return cli.Exit(fmt.Sprintf("prf: no built-in role %q", name), exitUsage)
+	}
+	path := filepath.Join(roleDirs("")[0], name+".md")
+	if err := writeAtomic(path, b); err != nil {
+		return cli.Exit("prf: "+err.Error(), exitSetup)
+	}
+	_, _ = fmt.Fprintf(c.Root().Writer, "reset role %s %s\n", name, path)
+	return nil
+}
+
+// optionalRepo returns --repo, which may be empty, after checking it.
+func optionalRepo(c *cli.Command) (string, error) {
+	if c.String("repo") == "" {
+		return "", nil
+	}
+	return repoArg(c)
+}
+
+func repoAndRoleName(c *cli.Command) (repo, name string, err error) {
+	if repo, err = optionalRepo(c); err != nil {
+		return "", "", err
+	}
+	name, err = nameArg(c, "role")
+	return repo, name, err
+}
+
+// nameArg returns the single <name> argument.
+func nameArg(c *cli.Command, kind string) (string, error) {
+	if c.Args().Len() != 1 {
+		return "", cli.Exit(fmt.Sprintf("prf: give exactly one %s name", kind), exitUsage)
+	}
+	name := c.Args().First()
+	if !itemName.MatchString(name) {
+		return "", cli.Exit(fmt.Sprintf("prf: invalid %s name %q: use letters, digits, '-', '_' and '.'", kind, name), exitUsage)
+	}
+	return name, nil
+}
+
+// writeAtomic replaces path with b, so a reader never sees a half-written file.
+func writeAtomic(path string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(f.Name()) }() // no-op once renamed
+	if _, err := f.Write(b); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(f.Name(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(v)
+}
