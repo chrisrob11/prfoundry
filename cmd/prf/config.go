@@ -146,12 +146,12 @@ func configCmd() *cli.Command {
 			w := c.Root().Writer
 			path := filepath.Join(home, confFile)
 			if _, err := os.Stat(path); err != nil {
-				fmt.Fprintf(w, "# %s (not found; create it with: prf config init)\n", path)
+				_, _ = fmt.Fprintf(w, "# %s (not found; create it with: prf config init)\n", path)
 			} else {
-				fmt.Fprintf(w, "# %s\n", path)
+				_, _ = fmt.Fprintf(w, "# %s\n", path)
 			}
 			for _, repo := range configuredRepos() {
-				fmt.Fprintf(w, "# repo %s: %s\n", repo, filepath.Join(home, repo))
+				_, _ = fmt.Fprintf(w, "# repo %s: %s\n", repo, filepath.Join(home, repo))
 			}
 			return writeJSON(w, cfg)
 		},
@@ -201,13 +201,13 @@ func initConfig(ctx context.Context, c *cli.Command) error {
 	w := c.Root().Writer
 	for _, f := range files {
 		if _, err := os.Stat(f[0]); err == nil {
-			fmt.Fprintln(w, "exists", f[0])
+			_, _ = fmt.Fprintln(w, "exists", f[0])
 			continue
 		}
 		if err := writeFile(f[0], f[1]); err != nil {
 			return err
 		}
-		fmt.Fprintln(w, "wrote ", f[0])
+		_, _ = fmt.Fprintln(w, "wrote ", f[0])
 	}
 	return nil
 }

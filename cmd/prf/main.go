@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +30,8 @@ const (
 func main() {
 	if err := newApp().Run(context.Background(), os.Args); err != nil {
 		code := exitUsage
-		if ec, ok := err.(cli.ExitCoder); ok {
+		var ec cli.ExitCoder
+		if errors.As(err, &ec) {
 			code = ec.ExitCode()
 		} else {
 			err = fmt.Errorf("prf: %w", err)
@@ -122,7 +124,7 @@ func phaseFlags(defaultPipeline string) []cli.Flag {
 var stderr io.Writer = os.Stderr
 
 func logf(format string, args ...any) {
-	fmt.Fprintf(stderr, "prf: "+format+"\n", args...)
+	_, _ = fmt.Fprintf(stderr, "prf: "+format+"\n", args...)
 }
 
 // job is everything one prf invocation needs, after flags, env, and the

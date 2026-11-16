@@ -51,7 +51,7 @@ func TestPushAndPR(t *testing.T) {
 	ghLog := withFakeGH(t)
 	captureStderr(t)
 	run := func(repo, branch string, extra ...string) int {
-		os.Remove(ghLog)
+		removeFile(t, ghLog)
 		return e.run(t, append([]string{"run", "--repo", repo, "--branch", branch, "--prompt", "x", "--role", "review"}, extra...)...)
 	}
 	onOrigin := func(branch string) bool { return mustGit(t, e.origin, "branch", "--list", branch) != "" }
@@ -140,7 +140,7 @@ func TestPushAndPR(t *testing.T) {
 		checkout := filepath.Join(e.root, "nowhere")
 		mustGit(t, "", "clone", "-q", e.origin, checkout)
 		mustGit(t, checkout, "remote", "set-url", "origin", "/nonexistent/repo")
-		os.Remove(ghLog)
+		removeFile(t, ghLog)
 		if code := e.run(t, "apply", "--dir", checkout, "--branch", "g", "--prompt", "x", "--pr-create", "draft"); code != exitShip {
 			t.Fatalf("exit %d, want %d", code, exitShip)
 		}
@@ -175,7 +175,7 @@ func TestResume(t *testing.T) {
 	before := readState(t, jobDir)
 
 	writeRole(t, e.roles, "test", "test on {{.Branch}}")
-	os.Remove(e.log)
+	removeFile(t, e.log)
 	if code := e.run(t, "resume", "origin/b"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
 	}
@@ -200,7 +200,7 @@ func TestResume(t *testing.T) {
 	if code := e.run(t, "resume", "origin/b"); code != exitUsage {
 		t.Errorf("resuming a finished job: exit %d, want %d", code, exitUsage)
 	}
-	os.Remove(e.log)
+	removeFile(t, e.log)
 	if code := e.run(t, "resume", jobDir, "--from", "3"); code != 0 {
 		t.Fatalf("resume --from 3 by path: exit %d", code)
 	}

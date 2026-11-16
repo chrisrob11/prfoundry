@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/urfave/cli/v3"
@@ -20,7 +21,7 @@ func indexCmd(ctx context.Context, c *cli.Command) error {
 	if err := buildIndex(dir, filepath.Base(dir), firstNonEmpty(gitOutput(dir, "branch", "--show-current"), "HEAD"), c.String("out")); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	fmt.Fprintf(c.Root().Writer, "wrote %s in %s\n", filepath.Join(c.String("out"), "index.md"), time.Since(start).Round(time.Millisecond))
+	_, _ = fmt.Fprintf(c.Root().Writer, "wrote %s in %s\n", filepath.Join(c.String("out"), "index.md"), time.Since(start).Round(time.Millisecond))
 	return nil
 }
 
@@ -54,7 +55,7 @@ func (j *job) prepareContext() error {
 		j.setupStage("running " + line)
 		cmd := exec.Command("sh", "-c", line)
 		cmd.Dir = j.dir
-		cmd.Env = append(j.env, "PRF_CONTEXT="+j.contextDir, "PRF_JOB="+j.jobDir)
+		cmd.Env = append(slices.Clip(j.env), "PRF_CONTEXT="+j.contextDir, "PRF_JOB="+j.jobDir)
 		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("setup command %q: %w", line, err)

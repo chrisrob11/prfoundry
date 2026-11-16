@@ -22,7 +22,7 @@ import (
 // the file's last line is always the job's current state.
 func (j *job) event(format string, args ...any) {
 	line := fmt.Sprintf(format, args...)
-	fmt.Fprintln(stderr, line)
+	_, _ = fmt.Fprintln(stderr, line)
 	if err := appendLine(j.status, line); err != nil {
 		logf("writing status: %v", err)
 	}
@@ -51,19 +51,19 @@ var heartbeatEvery = 30 * time.Second
 // instead, running its fix role on each round of requested changes; an ask
 // gate shows you the question the step before it left, if any; a check gate
 // runs a command, having its fix role fix what fails. Every step gets <job>/tmp as PRF_TMP.
-func (j *job) runPhases(phases []phase) error {
+func (j *job) runPhases(phases []phase) (err error) {
 	logFile, err := openAppend(j.out)
 	if err != nil {
 		logf("opening output: %v", err)
 		return j.finish("setup", exitSetup)
 	}
-	defer logFile.Close()
+	defer closeInto(&err, logFile)
 	rawFile, err := openAppend(filepath.Join(j.jobDir, "claude.jsonl"))
 	if err != nil {
 		logf("opening output: %v", err)
 		return j.finish("setup", exitSetup)
 	}
-	defer rawFile.Close()
+	defer closeInto(&err, rawFile)
 	if err := j.useJobTmp(); err != nil {
 		logf("making the job's folders: %v", err)
 		return j.finish("setup", exitSetup)
@@ -238,7 +238,7 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data promptData, 
 	j.event("PRF_START branch=%s phase=%s step=%s pipeline=%s%s", j.branch, name, step, pipeline, modelField)
 	j.setState(func(s *jobState) { s.State, s.Stage, s.Activity, s.ReviewURL = stateRunning, name, "", "" })
 	logf("[%s] %s: started", step, label)
-	fmt.Fprintf(j.feed, "=== prf phase %s (step %s, pipeline %s%s) ===\n", name, step, pipeline, strings.ReplaceAll(modelField, "=", " "))
+	_, _ = fmt.Fprintf(j.feed, "=== prf phase %s (step %s, pipeline %s%s) ===\n", name, step, pipeline, strings.ReplaceAll(modelField, "=", " "))
 	phaseStart, prog := time.Now(), &progress{}
 	expect, startHead := j.expectOf(p), ""
 	if expect != "" {
@@ -260,10 +260,11 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data promptData, 
 	close(stopHeartbeat)
 	<-heartbeatDone // so no "working" line follows the phase's result
 	if f, ok := stdin.(*os.File); ok && f != os.Stdin {
-		f.Close()
+		_ = f.Close() // read-only
 	}
 	if err != nil {
-		if _, ok := err.(*exec.ExitError); !ok {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
 			logf("running claude: %v", err)
 			return exitSetup
 		}
@@ -281,8 +282,8 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data promptData, 
 		code = exitBudget
 	}
 	if res.text != "" {
-		fmt.Fprintf(j.log, "--- %s summary ---\n%s\n", name, res.text)
-		fmt.Fprintf(j.summaries, "%s\n", res.text)
+		_, _ = fmt.Fprintf(j.log, "--- %s summary ---\n%s\n", name, res.text)
+		_, _ = fmt.Fprintf(j.summaries, "%s\n", res.text)
 	}
 	j.lastResult = res
 	j.cost += res.cost
@@ -396,7 +397,9 @@ func (j *job) recordRun(n int) {
 	})
 	path := j.reportPath(n)
 	if j.lastResult.text == "" {
-		os.Remove(path) // so a later run isn't pointed at an older report
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) { // so a later run isn't pointed at an older report
+			logf("warning: removing an older report: %v", err)
+		}
 		return
 	}
 	if err := writeFile(path, j.lastResult.text+"\n"); err != nil {
@@ -549,10 +552,17 @@ func appendLine(path, line string) error {
 		return err
 	}
 	if _, err := fmt.Fprintln(f, line); err != nil {
-		f.Close()
-		return err
+		return errors.Join(err, f.Close())
 	}
 	return f.Close()
+}
+
+// closeInto closes f, adding a failure to *err only when there is one, so an
+// error that was already there keeps its type (a cli.ExitCoder stays one).
+func closeInto(err *error, f io.Closer) {
+	if cerr := f.Close(); cerr != nil {
+		*err = errors.Join(*err, cerr)
+	}
 }
 
 // writeFile writes s to path, creating parent directories.

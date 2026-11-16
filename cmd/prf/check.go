@@ -70,7 +70,7 @@ func (j *job) commandGate(p phase, step, model string, data promptData) int {
 		logf("[%s] %s: making a TMPDIR for the command: %v", step, p.name, err)
 		return end(exitSetup, "")
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	run := checkRun{tmp: tmp}
 	if run.sandbox, err = j.checkSandbox(tmp); err != nil {
 		logf("[%s] %s: %v", step, p.name, err)
@@ -187,7 +187,7 @@ func (j *job) runCommand(command string, timeout time.Duration, run checkRun) (s
 		cancel()
 		err = <-done
 	}
-	syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // whatever it left running
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // whatever it left running
 	switch {
 	case interrupted:
 		return out.String(), 130, errInterrupted

@@ -94,7 +94,9 @@ var (
 	}
 	notify = func(title, msg string) {
 		if runtime.GOOS == "darwin" {
-			go exec.Command("osascript", "-e", fmt.Sprintf("display notification %q with title %q sound name \"Glass\"", msg, title)).Run()
+			go func() {
+				_ = exec.Command("osascript", "-e", fmt.Sprintf("display notification %q with title %q sound name \"Glass\"", msg, title)).Run()
+			}()
 		}
 	}
 )
@@ -362,7 +364,9 @@ func startReviewServer(dir, repo, job string, activity func() string) (*reviewSe
 	var link reviewLink
 	path := filepath.Join(dir, "link.json")
 	if b, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(b, &link)
+		if err := json.Unmarshal(b, &link); err != nil {
+			logf("reading the review page's saved URL from %s: %v", path, err)
+		}
 	}
 	var ln net.Listener
 	if link.Port > 0 {
@@ -400,21 +404,25 @@ func startReviewServer(dir, repo, job string, activity func() string) (*reviewSe
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+prefix+"{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write(reviewPage)
+		_, _ = w.Write(reviewPage)
 	})
 	mux.HandleFunc("GET "+prefix+"api/state", s.serveState)
 	mux.HandleFunc("GET "+prefix+"api/review", s.serveReview)
 	mux.HandleFunc("POST "+prefix+"api/submit", s.serveSubmit)
 	mux.HandleFunc("GET "+prefix+"api/file", s.serveFile)
 	s.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go s.srv.Serve(ln)
+	go func() {
+		if err := s.srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			logf("serving the review page: %v", err)
+		}
+	}()
 	return s, nil
 }
 
 func (s *reviewServer) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	s.srv.Shutdown(ctx)
+	_ = s.srv.Shutdown(ctx) // the job is done with the page; open connections just drop
 }
 
 // set moves the page to state, showing view.
@@ -521,5 +529,5 @@ func writeHTTPJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v) // the status is sent; a failed write is the client gone
 }

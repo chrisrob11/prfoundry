@@ -399,10 +399,10 @@ func pipelineList(ctx context.Context, c *cli.Command) error {
 		return writeJSON(w, entries)
 	}
 	if !exists {
-		fmt.Fprintf(w, "# %s doesn't exist; using the built-in default\n", pipelinePath(repo))
+		_, _ = fmt.Fprintf(w, "# %s doesn't exist; using the built-in default\n", pipelinePath(repo))
 	}
 	if m := firstNonEmpty(p.Model, cfg.Model); m != "" {
-		fmt.Fprintf(w, "# steps without a model use %s\n", m)
+		_, _ = fmt.Fprintf(w, "# steps without a model use %s\n", m)
 	}
 	for _, e := range entries {
 		mark, status := " ", ""
@@ -412,7 +412,7 @@ func pipelineList(ctx context.Context, c *cli.Command) error {
 		if !e.Valid {
 			status = "  INVALID: " + e.Error
 		}
-		fmt.Fprintf(w, "%s %-12s %s%s\n", mark, e.Name, joinSteps(e.Steps, " -> "), status)
+		_, _ = fmt.Fprintf(w, "%s %-12s %s%s\n", mark, e.Name, joinSteps(e.Steps, " -> "), status)
 	}
 	return nil
 }
@@ -479,7 +479,7 @@ func pipelineSet(ctx context.Context, c *cli.Command) error {
 	if err := writePipelines(repo, p); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	fmt.Fprintf(c.Root().Writer, "saved pipeline %s for %s: %s\n", name, repo, joinSteps(roles, " -> "))
+	_, _ = fmt.Fprintf(c.Root().Writer, "saved pipeline %s for %s: %s\n", name, repo, joinSteps(roles, " -> "))
 	return nil
 }
 
@@ -503,7 +503,7 @@ func pipelineRemove(ctx context.Context, c *cli.Command) error {
 	if err := writePipelines(repo, p); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	fmt.Fprintf(c.Root().Writer, "removed pipeline %s for %s\n", name, repo)
+	_, _ = fmt.Fprintf(c.Root().Writer, "removed pipeline %s for %s\n", name, repo)
 	return nil
 }
 
@@ -523,7 +523,7 @@ func pipelineDefault(ctx context.Context, c *cli.Command) error {
 	if err := writePipelines(repo, p); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	fmt.Fprintf(c.Root().Writer, "default pipeline for %s is now %s\n", repo, name)
+	_, _ = fmt.Fprintf(c.Root().Writer, "default pipeline for %s is now %s\n", repo, name)
 	return nil
 }
 

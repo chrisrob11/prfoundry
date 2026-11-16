@@ -48,8 +48,13 @@ func fakeOwner(t *testing.T, answers ...string) *[]ownerSaw {
 					t.Errorf("no question came at %s", page)
 					return
 				}
-				if res, err := http.Get(page + "api/file?path=" + url.QueryEscape("README.md")); err != nil || res.StatusCode != http.StatusOK {
-					t.Errorf("api/file README.md: %v %v", res, err)
+				if res, err := http.Get(page + "api/file?path=" + url.QueryEscape("README.md")); err != nil {
+					t.Errorf("api/file README.md: %v", err)
+				} else {
+					_ = res.Body.Close()
+					if res.StatusCode != http.StatusOK {
+						t.Errorf("api/file README.md: %s", res.Status)
+					}
 				}
 				views = append(views, saw)
 				res, err := http.Post(page+"api/submit", "application/json", strings.NewReader(body))
@@ -58,10 +63,14 @@ func fakeOwner(t *testing.T, answers ...string) *[]ownerSaw {
 					return
 				}
 				var out struct{ Version int }
-				json.NewDecoder(res.Body).Decode(&out)
-				res.Body.Close()
+				err = json.NewDecoder(res.Body).Decode(&out)
+				_ = res.Body.Close()
 				if res.StatusCode != http.StatusOK {
 					t.Errorf("posting answers: %s", res.Status)
+					return
+				}
+				if err != nil {
+					t.Errorf("decoding the answers' reply: %v", err)
 					return
 				}
 				version = out.Version
@@ -83,15 +92,17 @@ func awaitQuestion(page string, version int) (ownerSaw, bool) {
 			continue
 		}
 		saw.reviewView = reviewView{}
-		json.NewDecoder(res.Body).Decode(&saw.reviewView)
-		res.Body.Close()
-		if saw.State != pageWaiting || saw.Version <= version {
+		err = json.NewDecoder(res.Body).Decode(&saw.reviewView)
+		_ = res.Body.Close()
+		if err != nil || saw.State != pageWaiting || saw.Version <= version {
 			continue
 		}
 		if paths, _ := filepath.Glob(filepath.Join("work", "*", "*", stateFile)); len(paths) == 1 {
 			b, _ := os.ReadFile(paths[0])
 			saw.state = jobState{}
-			json.Unmarshal(b, &saw.state)
+			if err := json.Unmarshal(b, &saw.state); err != nil {
+				continue
+			}
 		}
 		if saw.state.State == stateAsk {
 			return saw, true
@@ -294,7 +305,7 @@ func TestAskSubmissions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res.Body.Close()
+		_ = res.Body.Close()
 		return res.StatusCode
 	}
 	for _, bad := range []string{approve, `{"verdict": "answer", "body": " "}`} {
@@ -305,8 +316,13 @@ func TestAskSubmissions(t *testing.T) {
 	if code := post(acceptAll); code != http.StatusOK {
 		t.Errorf("accept: %d", code)
 	}
-	if res, err := http.Get(srv.url + "api/file?path=x"); err != nil || res.StatusCode != http.StatusNotFound {
-		t.Errorf("api/file without a checkout: %v %v", res, err)
+	if res, err := http.Get(srv.url + "api/file?path=x"); err != nil {
+		t.Errorf("api/file without a checkout: %v", err)
+	} else {
+		_ = res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("api/file without a checkout: %s", res.Status)
+		}
 	}
 }
 
@@ -405,7 +421,7 @@ func TestAskGateFixRoleFails(t *testing.T) {
 
 	// Resuming records the saved answers without asking again, then re-runs
 	// the asker.
-	os.Unsetenv("FAKE_FAIL_ON")
+	t.Setenv("FAKE_FAIL_ON", "")
 	after := fakeOwner(t)
 	if code := e.run(t, "resume", "origin/b"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
@@ -479,9 +495,11 @@ func TestFileAtHead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		var out map[string]string
-		json.NewDecoder(res.Body).Decode(&out)
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
 		return res.StatusCode, out
 	}
 	if code, out := get("README.md"); code != http.StatusOK || out["path"] != "README.md" || !strings.HasPrefix(out["text"], "# origin") {

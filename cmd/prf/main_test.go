@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -71,6 +72,14 @@ type env struct {
 // conf.json whose fields are the basics plus conf (JSON object members, e.g.
 // `"sandbox": false`); {{origin}} in conf becomes the origin repo's path.
 // The working directory moves to a temp dir.
+// removeFile removes path, which may not exist, failing t on any other error.
+func removeFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+}
+
 func newEnv(t *testing.T, conf string) env {
 	t.Helper()
 	e := env{origin: newOrigin(t), root: t.TempDir()}
@@ -80,8 +89,10 @@ func newEnv(t *testing.T, conf string) env {
 	e.log = filepath.Join(e.root, "claude.log")
 	t.Setenv("FAKE_LOG", e.log)
 	for _, k := range []string{"PRF_WORKDIR", "PRF_HOME", "CLAUDE_BIN"} {
-		t.Setenv(k, "") // registers the restore
-		os.Unsetenv(k)
+		t.Setenv(k, "") // registers the restore; cli reads an empty variable as set
+		if err := os.Unsetenv(k); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	claude := filepath.Join(e.root, "claude")
@@ -270,7 +281,7 @@ func TestApplyResumesRunClone(t *testing.T) {
 		t.Fatalf("run: exit %d, want 1 from the failing test role", code)
 	}
 	writeRole(t, e.roles, "test", "test on {{.Branch}}")
-	os.Remove(e.log)
+	removeFile(t, e.log)
 
 	jobDir := filepath.Join(e.root, "work", "app", "login")
 	if code := e.run(t, "apply", "--repo", "app", "--dir", filepath.Join(jobDir, "repo"), "--pr", pr, "--role", "test,review"); code != 0 {
@@ -306,7 +317,7 @@ func TestRunWithPipelines(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Remove(e.log)
+			removeFile(t, e.log)
 			if code := e.run(t, append([]string{"run", "--prompt", "x"}, tt.args...)...); code != 0 {
 				t.Fatalf("exit %d", code)
 			}
@@ -323,7 +334,7 @@ func TestRunWithPipelines(t *testing.T) {
 	// apply only runs a pipeline when asked.
 	repo := filepath.Join(e.root, "checkout")
 	mustGit(t, "", "clone", "-q", e.origin, repo)
-	os.Remove(e.log)
+	removeFile(t, e.log)
 	if code := e.run(t, "apply", "--dir", repo, "--prompt", "x"); code != 0 {
 		t.Fatalf("apply: exit %d", code)
 	}
@@ -365,8 +376,7 @@ func TestApply(t *testing.T) {
 // run trusts mise configs in its own clones; apply leaves your checkout alone.
 func TestMiseTrust(t *testing.T) {
 	e := newEnv(t, "")
-	t.Setenv("MISE_TRUSTED_CONFIG_PATHS", "")
-	os.Unsetenv("MISE_TRUSTED_CONFIG_PATHS")
+	t.Setenv("MISE_TRUSTED_CONFIG_PATHS", "") // miseEnv treats empty as unset
 	repo := filepath.Join(e.root, "checkout")
 	mustGit(t, "", "clone", "-q", e.origin, repo)
 
@@ -404,7 +414,7 @@ func TestEmptyPrompt(t *testing.T) {
 func TestCodebaseContext(t *testing.T) {
 	e := newEnv(t, `"repos": {"app": "{{origin}}"}`)
 	run := func(branch string, extra ...string) int {
-		os.Remove(e.log)
+		removeFile(t, e.log)
 		return e.run(t, append([]string{"run", "--repo", "app", "--branch", branch, "--prompt", "x", "--role", "review"}, extra...)...)
 	}
 	contextDir := func(branch string) string { return filepath.Join(e.root, "work", "app", branch, "context") }
@@ -708,7 +718,7 @@ func TestStepModels(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Remove(e.log)
+			removeFile(t, e.log)
 			if code := e.run(t, append([]string{"run", "--prompt", "x"}, tt.args...)...); code != 0 {
 				t.Fatalf("exit %d", code)
 			}
@@ -795,7 +805,7 @@ func TestCostCaps(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			os.Remove(e.log)
+			removeFile(t, e.log)
 			if code := e.run(t, append([]string{"run", "--repo", "app", "--prompt", "x"}, tt.args...)...); code != 0 {
 				t.Fatalf("exit %d", code)
 			}
@@ -806,7 +816,7 @@ func TestCostCaps(t *testing.T) {
 	}
 
 	t.Run("job cap used up stops before the next step", func(t *testing.T) {
-		os.Remove(e.log)
+		removeFile(t, e.log)
 		if code := e.run(t, "run", "--repo", "app", "--branch", "d", "--prompt", "x", "--max-cost", "0.10"); code != exitBudget {
 			t.Fatalf("exit %d, want %d", code, exitBudget)
 		}
@@ -822,7 +832,7 @@ func TestCostCaps(t *testing.T) {
 	t.Run("a step that hits its budget stops the job", func(t *testing.T) {
 		writeRole(t, e.roles, "test", "BUDGET")
 		t.Cleanup(func() { writeRole(t, e.roles, "test", "test on {{.Branch}}") })
-		os.Remove(e.log)
+		removeFile(t, e.log)
 		if code := e.run(t, "run", "--repo", "app", "--branch", "f", "--prompt", "x"); code != exitBudget {
 			t.Fatalf("exit %d, want %d", code, exitBudget)
 		}

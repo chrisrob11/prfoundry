@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -20,8 +21,8 @@ printf 'args=%s\ntmpdir=%s\n' "$*" "$TMPDIR" >> "$FAKE_SRT_LOG"
 exec sh -c "$4"
 `
 
-// withFakeSRT puts the fake srt first on PATH and returns its log.
-func withFakeSRT(t *testing.T) string {
+// withFakeSRT puts the fake srt first on PATH, logging to $FAKE_SRT_LOG.
+func withFakeSRT(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
 	writeFileT(t, filepath.Join(bin, "srt"), fakeSRT)
@@ -29,9 +30,7 @@ func withFakeSRT(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	log := filepath.Join(bin, "calls")
-	t.Setenv("FAKE_SRT_LOG", log)
-	return log
+	t.Setenv("FAKE_SRT_LOG", filepath.Join(bin, "calls"))
 }
 
 // checkEnv is a repo whose default pipeline is implement, then gate, then
@@ -182,7 +181,7 @@ func TestRunCommandInterrupted(t *testing.T) {
 	}()
 	start := time.Now()
 	out, code, err := j.runCommand("echo started; sleep 30", 0, checkRun{})
-	if err != errInterrupted || code != 130 || out != "started\n" {
+	if !errors.Is(err, errInterrupted) || code != 130 || out != "started\n" {
 		t.Errorf("got %q, %d, %v", out, code, err)
 	}
 	if took := time.Since(start); took > 10*time.Second {
@@ -311,7 +310,7 @@ func TestCheckSandbox(t *testing.T) {
 
 	t.Run("without srt, the gate refuses rather than run unsandboxed", func(t *testing.T) {
 		t.Setenv("PATH", "/usr/bin:/bin")
-		os.Remove(srtLog)
+		removeFile(t, srtLog)
 		errOut := captureStderr(t)
 		if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
@@ -325,7 +324,7 @@ func TestCheckSandbox(t *testing.T) {
 	})
 
 	t.Run("a job run without the sandbox runs the command directly", func(t *testing.T) {
-		os.Remove(srtLog)
+		removeFile(t, srtLog)
 		if code := e.run(t, "run", "--repo", e.origin, "--branch", "c", "--prompt", "x", "--sandbox=false"); code != 0 {
 			t.Fatalf("exit %d", code)
 		}
@@ -335,9 +334,9 @@ func TestCheckSandbox(t *testing.T) {
 	})
 
 	t.Run("so does one whose Claude settings turn the sandbox off", func(t *testing.T) {
-		os.Remove(srtLog)
+		removeFile(t, srtLog)
 		writeFileT(t, filepath.Join(e.home, "origin", settingsFile), `{"sandbox": {"enabled": false}}`)
-		defer os.Remove(filepath.Join(e.home, "origin", settingsFile))
+		defer removeFile(t, filepath.Join(e.home, "origin", settingsFile))
 		if code := e.run(t, "run", "--repo", e.origin, "--branch", "d", "--prompt", "x"); code != 0 {
 			t.Fatalf("exit %d", code)
 		}
@@ -348,7 +347,7 @@ func TestCheckSandbox(t *testing.T) {
 
 	t.Run("unreadable Claude settings stop the gate", func(t *testing.T) {
 		writeFileT(t, filepath.Join(e.home, "origin", settingsFile), `{oops`)
-		defer os.Remove(filepath.Join(e.home, "origin", settingsFile))
+		defer removeFile(t, filepath.Join(e.home, "origin", settingsFile))
 		if code := e.run(t, "run", "--repo", e.origin, "--branch", "e", "--prompt", "x"); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
 		}

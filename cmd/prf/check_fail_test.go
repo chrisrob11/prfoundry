@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -40,14 +41,14 @@ func gateJob(t *testing.T) *job {
 	return j
 }
 
-// checkPhase is a check gate running command, with fix role prompt.
-func checkPhase(t *testing.T, command, prompt string, maxRounds int) phase {
+// checkPhase is a check gate running command, with fix role prompt and one round.
+func checkPhase(t *testing.T, command, prompt string) phase {
 	t.Helper()
 	p, err := parseRole("fix-check", prompt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.name, p.gate, p.fixRole, p.run, p.maxRounds = "@check", gateCheck, "fix-check", command, maxRounds
+	p.name, p.gate, p.fixRole, p.run, p.maxRounds = "@check", gateCheck, "fix-check", command, 1
 	return p
 }
 
@@ -109,7 +110,7 @@ func TestRunCommandEdges(t *testing.T) {
 			j.sigs <- syscall.SIGHUP
 		}()
 		out, code, err := j.runCommand("trap 'echo cleaned up; exit 1' TERM; echo started; sleep 30 & wait", 0, checkRun{})
-		if err != errInterrupted || code != 130 || !strings.Contains(out, "cleaned up") {
+		if !errors.Is(err, errInterrupted) || code != 130 || !strings.Contains(out, "cleaned up") {
 			t.Errorf("got %q, %d, %v", out, code, err)
 		}
 	})
@@ -142,7 +143,7 @@ func TestCommandGateFailures(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 			j.sigs <- os.Interrupt
 		}()
-		if code := j.commandGate(checkPhase(t, "echo started; sleep 30", "fix", 1), "2/3", "", promptData{}); code != 130 {
+		if code := j.commandGate(checkPhase(t, "echo started; sleep 30", "fix"), "2/3", "", promptData{}); code != 130 {
 			t.Fatalf("exit %d, want 130", code)
 		}
 		if log := readFile(t, filepath.Join(j.jobDir, "checks", "step-2", "round-1.log")); log != "started\n" {
@@ -155,8 +156,10 @@ func TestCommandGateFailures(t *testing.T) {
 
 	t.Run("a command that can't start", func(t *testing.T) {
 		j := gateJob(t)
-		os.RemoveAll(j.dir)
-		if code := j.commandGate(checkPhase(t, "true", "COMMIT", 1), "1/1", "", promptData{}); code != exitSetup {
+		if err := os.RemoveAll(j.dir); err != nil {
+			t.Fatal(err)
+		}
+		if code := j.commandGate(checkPhase(t, "true", "COMMIT"), "1/1", "", promptData{}); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
 		}
 		if b, _ := os.ReadFile(os.Getenv("FAKE_LOG")); len(b) > 0 {
@@ -167,7 +170,7 @@ func TestCommandGateFailures(t *testing.T) {
 	t.Run("no TMPDIR for the command", func(t *testing.T) {
 		j := gateJob(t)
 		t.Setenv("TMPDIR", filepath.Join(j.jobDir, "missing"))
-		if code := j.commandGate(checkPhase(t, "true", "fix", 1), "1/1", "", promptData{}); code != exitSetup {
+		if code := j.commandGate(checkPhase(t, "true", "fix"), "1/1", "", promptData{}); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
 		}
 	})
@@ -176,7 +179,7 @@ func TestCommandGateFailures(t *testing.T) {
 		j := gateJob(t)
 		writeFileT(t, filepath.Join(j.jobDir, "checks"), "a file, not a folder")
 		j.tmp = filepath.Join(j.jobDir, "checks", "tmp") // unwritable too
-		if code := j.commandGate(checkPhase(t, "exit 1", "fix\n{{.Review}}", 1), "1/1", "", promptData{}); code != exitCheck {
+		if code := j.commandGate(checkPhase(t, "exit 1", "fix\n{{.Review}}"), "1/1", "", promptData{}); code != exitCheck {
 			t.Fatalf("exit %d, want %d", code, exitCheck)
 		}
 		fix := readFile(t, os.Getenv("FAKE_LOG"))
@@ -243,9 +246,16 @@ func TestCheckSandboxSettings(t *testing.T) {
 	})
 	t.Run("a settings file that can't be written", func(t *testing.T) {
 		writeFileT(t, settings, `{"sandbox": {"enabled": true}}`)
-		os.Remove(filepath.Join(j.jobDir, "check-sandbox.json"))
-		os.MkdirAll(filepath.Join(j.jobDir, "check-sandbox.json", "x"), 0o755) // a folder in the way
-		defer os.RemoveAll(filepath.Join(j.jobDir, "check-sandbox.json"))
+		path := filepath.Join(j.jobDir, "check-sandbox.json")
+		removeFile(t, path)
+		if err := os.MkdirAll(filepath.Join(path, "x"), 0o755); err != nil { // a folder in the way
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := os.RemoveAll(path); err != nil {
+				t.Error(err)
+			}
+		}()
 		if _, err := j.checkSandbox("/t"); err == nil {
 			t.Error("no error")
 		}
@@ -306,7 +316,9 @@ func TestCheckGateHangup(t *testing.T) {
 	go func() {
 		for range 200 {
 			if _, err := os.Stat(started); err == nil && readFile(t, started) != "" {
-				syscall.Kill(os.Getpid(), syscall.SIGHUP)
+				if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+					t.Error(err)
+				}
 				return
 			}
 			time.Sleep(25 * time.Millisecond)
@@ -369,7 +381,7 @@ func TestRealSRT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	sandbox, err := j.checkSandbox(tmp)
 	if err != nil {
 		t.Fatal(err)
@@ -387,7 +399,7 @@ touch "`+home+`/prf-srt-probe" 2>/dev/null && echo HOME-WRITABLE
 ls ~/.ssh >/dev/null 2>&1 && echo SSH-READABLE
 echo "shell=$0"
 exit 3`, 0, checkRun{sandbox: sandbox, tmp: tmp})
-	os.Remove(filepath.Join(home, "prf-srt-probe"))
+	removeFile(t, filepath.Join(home, "prf-srt-probe"))
 	if err != nil || code != 3 {
 		t.Fatalf("got %d, %v:\n%s", code, err, out)
 	}

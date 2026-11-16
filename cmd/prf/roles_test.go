@@ -182,10 +182,10 @@ func TestBuiltinRolesRender(t *testing.T) {
 				t.Errorf("%s %+v: branch missing", p.name, data)
 			}
 			if strings.Contains(got, "/plans/spec.md") != (data.PR != "") {
-				t.Errorf("%s %+v: PR mentioned = %v", p.name, data, !(data.PR != ""))
+				t.Errorf("%s %+v: PR mentioned = %v", p.name, data, data.PR == "")
 			}
 			if strings.Contains(got, "TASK-TEXT") != (data.Task != "") {
-				t.Errorf("%s %+v: task mentioned = %v", p.name, data, !(data.Task != ""))
+				t.Errorf("%s %+v: task mentioned = %v", p.name, data, data.Task == "")
 			}
 		}
 	}

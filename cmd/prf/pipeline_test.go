@@ -44,7 +44,7 @@ func TestStepJSON(t *testing.T) {
 	if want := `["implement",{"role":"review","model":"haiku"},{"role":"test","max_cost":2.5}]`; string(b) != want {
 		t.Errorf("encoded %s, want %s (a step without a model stays a plain string)", b, want)
 	}
-	for _, bad := range []string{`[{"role": "x", "modle": "y"}]`, `[5]`} {
+	for _, bad := range []string{`[{"role": "x", "modle": "y"}]`, `[5]`} { //nolint:misspell // deliberate typo: tests unknown-field rejection
 		if json.Unmarshal([]byte(bad), &steps) == nil {
 			t.Errorf("%s should not decode", bad)
 		}
@@ -55,7 +55,7 @@ func TestPipelineRoles(t *testing.T) {
 	home = t.TempDir()
 	writeFileT(t, filepath.Join(home, "app", pipelineFile), `{"default": "feature", "pipelines": {"feature": ["implement", "review"], "empty": []}}`)
 	writeFileT(t, filepath.Join(home, "nodefault", pipelineFile), `{"pipelines": {"x": ["review"]}}`)
-	writeFileT(t, filepath.Join(home, "typo", pipelineFile), `{"defualt": "x", "pipelines": {}}`)
+	writeFileT(t, filepath.Join(home, "typo", pipelineFile), `{"defualt": "x", "pipelines": {}}`) //nolint:misspell // deliberate typo: tests unknown-field rejection
 
 	tests := []struct {
 		repo, name string
@@ -68,7 +68,7 @@ func TestPipelineRoles(t *testing.T) {
 		{repo: "app", name: "empty", wantErr: "lists no roles"},
 		{repo: "other", want: builtinPipeline},
 		{repo: "nodefault", wantErr: "no default pipeline"},
-		{repo: "typo", wantErr: `unknown field "defualt"`},
+		{repo: "typo", wantErr: `unknown field "defualt"`}, //nolint:misspell // deliberate typo: tests unknown-field rejection
 	}
 	for _, tt := range tests {
 		t.Run(tt.repo+"/"+tt.name, func(t *testing.T) {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -134,7 +135,9 @@ func resume(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	j.env = miseEnv(trustedDir(j.dir, workdir))
-	j.listContext() // a missing context folder just means no context
+	if err := j.listContext(); err != nil && !errors.Is(err, fs.ErrNotExist) { // a missing one just means no context
+		logf("warning: listing the context folder: %v", err)
+	}
 	phases, err := loadPhases(steps, roleDirs(j.name), j.pr != "" || j.task != "", j.task != "")
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
@@ -188,28 +191,28 @@ func clean(ctx context.Context, c *cli.Command) error {
 		}
 		name := s.Repo + "/" + s.Job
 		if reason := unsafeToRemove(s); reason != "" && !c.Bool("force") {
-			fmt.Fprintf(w, "keep    %-30s %s (--force removes it anyway)\n", name, reason)
+			_, _ = fmt.Fprintf(w, "keep    %-30s %s (--force removes it anyway)\n", name, reason)
 			continue
 		}
 		size := dirSize(s.JobDir)
 		picked++
 		freed += size
 		if !c.Bool("yes") {
-			fmt.Fprintf(w, "remove  %-30s %-6s %s\n", name, s.State, megabytes(size))
+			_, _ = fmt.Fprintf(w, "remove  %-30s %-6s %s\n", name, s.State, megabytes(size))
 			continue
 		}
 		if err := os.RemoveAll(s.JobDir); err != nil {
 			return cli.Exit("prf: "+err.Error(), exitSetup)
 		}
-		fmt.Fprintf(w, "removed %-30s %-6s %s\n", name, s.State, megabytes(size))
+		_, _ = fmt.Fprintf(w, "removed %-30s %-6s %s\n", name, s.State, megabytes(size))
 	}
 	switch {
 	case picked == 0:
-		fmt.Fprintln(w, "nothing to remove")
+		_, _ = fmt.Fprintln(w, "nothing to remove")
 	case c.Bool("yes"):
-		fmt.Fprintf(w, "freed %s\n", megabytes(freed))
+		_, _ = fmt.Fprintf(w, "freed %s\n", megabytes(freed))
 	default:
-		fmt.Fprintf(w, "dry run: would free %s; add --yes to remove\n", megabytes(freed))
+		_, _ = fmt.Fprintf(w, "dry run: would free %s; add --yes to remove\n", megabytes(freed))
 	}
 	return nil
 }
@@ -235,7 +238,7 @@ func unsafeToRemove(s jobState) string {
 
 func dirSize(dir string) int64 {
 	var size int64
-	filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err == nil && d.Type().IsRegular() {
 			if info, err := d.Info(); err == nil {
 				size += info.Size()
@@ -243,6 +246,9 @@ func dirSize(dir string) int64 {
 		}
 		return nil
 	})
+	if err != nil {
+		logf("measuring %s: %v", dir, err)
+	}
 	return size
 }
 

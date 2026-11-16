@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,7 +33,7 @@ func TestPriorRun(t *testing.T) {
 	}
 
 	writeRole(t, e.roles, "test", "test on {{.Branch}} after {{.PriorRun}}")
-	os.Remove(e.log)
+	removeFile(t, e.log)
 	if code := e.run(t, "resume", "origin/b"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
 	}

@@ -78,10 +78,10 @@ func followStream(r io.Reader, raw, feed io.Writer, prog *progress, dir string) 
 	sc.Buffer(make([]byte, 0, 64<<10), 64<<20) // tool results can be large
 	for sc.Scan() {
 		line := sc.Bytes()
-		fmt.Fprintf(raw, "%s\n", line)
+		_, _ = fmt.Fprintf(raw, "%s\n", line)
 		var ev claudeEvent
 		if json.Unmarshal(line, &ev) != nil {
-			fmt.Fprintf(feed, "%s\n", line)
+			_, _ = fmt.Fprintf(feed, "%s\n", line)
 			continue
 		}
 		switch ev.Type {
@@ -90,12 +90,12 @@ func followStream(r io.Reader, raw, feed io.Writer, prog *progress, dir string) 
 				switch c.Type {
 				case "text":
 					if text := oneLine(c.Text, 200); text != "" {
-						fmt.Fprintf(feed, "  [claude] %s\n", text)
+						_, _ = fmt.Fprintf(feed, "  [claude] %s\n", text)
 					}
 				case "tool_use":
 					activity := describeTool(c.Name, c.Input, dir)
 					prog.record(activity)
-					fmt.Fprintf(feed, "  %s\n", activity)
+					_, _ = fmt.Fprintf(feed, "  %s\n", activity)
 				}
 			}
 		case "result":

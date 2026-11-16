@@ -207,7 +207,7 @@ func TestRunJobEnv(t *testing.T) {
 	}
 
 	// Resuming keeps them writable.
-	os.Remove(e.log)
+	removeFile(t, e.log)
 	if code := e.run(t, "resume", "app/b", "--from", "1"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
 	}
@@ -216,7 +216,7 @@ func TestRunJobEnv(t *testing.T) {
 	}
 
 	// Without job_env and job_seed, nothing changes.
-	os.Remove(e.log)
+	removeFile(t, e.log)
 	if code := e.run(t, "run", "--repo", "plain", "--branch", "b", "--role", "review"); code != 0 {
 		t.Fatalf("plain: exit %d", code)
 	}
@@ -232,7 +232,7 @@ func TestRunJobEnv(t *testing.T) {
 	// even for a repo with job_env.
 	checkout := filepath.Join(e.root, "checkout")
 	mustGit(t, "", "clone", "-q", e.origin, checkout)
-	os.Remove(e.log)
+	removeFile(t, e.log)
 	if code := e.run(t, "apply", "--repo", "app", "--dir", checkout, "--prompt", "x"); code != 0 {
 		t.Fatalf("apply: exit %d", code)
 	}

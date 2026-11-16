@@ -129,7 +129,7 @@ func roleList(ctx context.Context, c *cli.Command) error {
 		return writeJSON(w, entries)
 	}
 	if len(entries) == 0 {
-		fmt.Fprintf(w, "no roles in %s (prf config init installs the built-in roles)\n", strings.Join(roleDirs(repo), " or "))
+		_, _ = fmt.Fprintf(w, "no roles in %s (prf config init installs the built-in roles)\n", strings.Join(roleDirs(repo), " or "))
 		return nil
 	}
 	for _, e := range entries {
@@ -140,7 +140,7 @@ func roleList(ctx context.Context, c *cli.Command) error {
 		if e.Overrides != "" {
 			status += "  (overrides " + e.Overrides + ")"
 		}
-		fmt.Fprintf(w, "%-12s %-6s %s%s\n", e.Name, e.Scope, e.Description, status)
+		_, _ = fmt.Fprintf(w, "%-12s %-6s %s%s\n", e.Name, e.Scope, e.Description, status)
 	}
 	return nil
 }
@@ -182,7 +182,7 @@ func roleSet(ctx context.Context, c *cli.Command) error {
 	if err := writeAtomic(path, text); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	fmt.Fprintf(c.Root().Writer, "saved role %s %s\n", name, path)
+	_, _ = fmt.Fprintf(c.Root().Writer, "saved role %s %s\n", name, path)
 	return nil
 }
 
@@ -198,9 +198,9 @@ func roleRemove(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	w := c.Root().Writer
-	fmt.Fprintf(w, "removed role %s %s\n", name, path)
+	_, _ = fmt.Fprintf(w, "removed role %s %s\n", name, path)
 	if e := findRoleEntry(repo, name); e != nil {
-		fmt.Fprintf(w, "%s now resolves to %s\n", name, e.Path)
+		_, _ = fmt.Fprintf(w, "%s now resolves to %s\n", name, e.Path)
 	}
 	return nil
 }
@@ -218,7 +218,7 @@ func roleReset(ctx context.Context, c *cli.Command) error {
 	if err := writeAtomic(path, b); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	fmt.Fprintf(c.Root().Writer, "reset role %s %s\n", name, path)
+	_, _ = fmt.Fprintf(c.Root().Writer, "reset role %s %s\n", name, path)
 	return nil
 }
 
@@ -259,10 +259,9 @@ func writeAtomic(path string, b []byte) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name()) // no-op once renamed
+	defer func() { _ = os.Remove(f.Name()) }() // no-op once renamed
 	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
+		return errors.Join(err, f.Close())
 	}
 	if err := f.Close(); err != nil {
 		return err

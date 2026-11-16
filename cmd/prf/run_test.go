@@ -149,7 +149,7 @@ func TestOpenInput(t *testing.T) {
 				t.Fatal(err)
 			}
 			b, _ := io.ReadAll(r)
-			r.(io.Closer).Close()
+			_ = r.(io.Closer).Close() // read-only
 			if string(b) != "context" {
 				t.Errorf("first=%v: read %q", first, b)
 			}

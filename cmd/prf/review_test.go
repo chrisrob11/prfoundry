@@ -32,7 +32,7 @@ func fakeReviewer(t *testing.T, reviews ...string) *[]string {
 				t.Errorf("posting review: %v", err)
 				return
 			}
-			res.Body.Close()
+			_ = res.Body.Close()
 			if res.StatusCode != http.StatusOK {
 				t.Errorf("posting review: %s", res.Status)
 			}
@@ -161,7 +161,7 @@ func TestReviewServer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res.Body.Close()
+		_ = res.Body.Close()
 		return res.StatusCode
 	}
 
@@ -195,8 +195,11 @@ func TestReviewServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var state map[string]any
-	json.NewDecoder(res.Body).Decode(&state)
-	res.Body.Close()
+	err = json.NewDecoder(res.Body).Decode(&state)
+	_ = res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if state["state"] != pageFixing || state["activity"] != "Edit main.go" || !srv.watched() {
 		t.Errorf("state = %v, watched = %t", state, srv.watched())
 	}
@@ -207,7 +210,7 @@ func TestReviewServer(t *testing.T) {
 			url = "http://" + strings.Split(srv.url, "/")[2] + path
 		}
 		if res, err := http.Get(url); err == nil {
-			res.Body.Close()
+			_ = res.Body.Close()
 			if res.StatusCode != http.StatusNotFound {
 				t.Errorf("GET %s without the token: %d", url, res.StatusCode)
 			}
@@ -218,8 +221,11 @@ func TestReviewServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	var page bytes.Buffer
-	page.ReadFrom(res.Body)
-	res.Body.Close()
+	_, err = page.ReadFrom(res.Body)
+	_ = res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(page.String(), "prf review") {
 		t.Error("page not served")
 	}

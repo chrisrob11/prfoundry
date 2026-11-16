@@ -191,13 +191,13 @@ func statusCmd() *cli.Command {
 				return writeJSON(w, states)
 			}
 			if len(states) == 0 {
-				fmt.Fprintln(w, "no jobs")
+				_, _ = fmt.Fprintln(w, "no jobs")
 				return nil
 			}
 			tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "REPO\tJOB\tSTATE\tSTEP\tSTAGE\tTIME\tDETAIL")
+			_, _ = fmt.Fprintln(tw, "REPO\tJOB\tSTATE\tSTEP\tSTAGE\tTIME\tDETAIL")
 			for _, s := range states {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Repo, s.Job, s.State, stepOf(s), stageOf(s), timeOf(s), detailOf(s))
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Repo, s.Job, s.State, stepOf(s), stageOf(s), timeOf(s), detailOf(s))
 			}
 			return tw.Flush()
 		},

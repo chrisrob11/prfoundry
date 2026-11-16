@@ -39,27 +39,27 @@ func costsCmd() *cli.Command {
 				return writeJSON(w, rows)
 			}
 			if total == 0 {
-				fmt.Fprintln(w, "no spend recorded")
+				_, _ = fmt.Fprintln(w, "no spend recorded")
 				return nil
 			}
 			if len(rows) == 0 {
-				fmt.Fprintf(w, "no per-role spend recorded; total %s, all in jobs that ran before prf recorded it\n", usd(total))
+				_, _ = fmt.Fprintf(w, "no per-role spend recorded; total %s, all in jobs that ran before prf recorded it\n", usd(total))
 				return nil
 			}
 			tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(tw, "ROLE\tMODEL\tCOST\tSHARE\tRUNS\tTURNS/RUN\tCTX/TURN")
+			_, _ = fmt.Fprintln(tw, "ROLE\tMODEL\tCOST\tSHARE\tRUNS\tTURNS/RUN\tCTX/TURN")
 			for _, r := range rows {
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f%%\t%d\t%.1f\t%s\n", r.Role, firstNonEmpty(r.Model, "-"), usd(r.Cost),
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f%%\t%d\t%.1f\t%s\n", r.Role, firstNonEmpty(r.Model, "-"), usd(r.Cost),
 					100*r.Cost/total, r.Runs, float64(r.Turns)/float64(max(1, r.Runs)), perTurn(r))
 			}
 			if err := tw.Flush(); err != nil {
 				return err
 			}
-			fmt.Fprintf(w, "total %s", usd(total))
+			_, _ = fmt.Fprintf(w, "total %s", usd(total))
 			if unrecorded > 0 {
-				fmt.Fprintf(w, ", %s of it in jobs with no per-role spend", usd(unrecorded))
+				_, _ = fmt.Fprintf(w, ", %s of it in jobs with no per-role spend", usd(unrecorded))
 			}
-			fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w)
 			return nil
 		},
 	}

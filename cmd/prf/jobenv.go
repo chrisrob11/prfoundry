@@ -125,10 +125,10 @@ func seedJob(jobDir string, seeds []jobSeed) {
 		if exec.Command("cp", "-c", "-R", from, to).Run() == nil {
 			continue
 		}
-		os.RemoveAll(to) // whatever a failed clone left
+		_ = os.RemoveAll(to) // whatever a failed clone left
 		if out, err := exec.Command("cp", "-R", from, to).CombinedOutput(); err != nil {
 			logf("warning: job_seed: copying %s to %s: %v: %s", from, to, err, bytes.TrimSpace(out))
-			os.RemoveAll(to)
+			_ = os.RemoveAll(to)
 		}
 	}
 }
