@@ -44,3 +44,19 @@ and runs the job. Everything else is a package under `internal/`.
 | `internal/jsonio` | Strict JSON decoding and indented JSON output |
 | `internal/gitx` | Running git: for its effect, its success, or its output |
 | `internal/itemname` | What a role, pipeline or repo may be called |
+
+## Releasing
+
+Releases are built by GoReleaser (`.goreleaser.yaml`) from a version tag. To cut one, tag a commit
+on `main` and push the tag:
+
+```sh
+git switch main && git pull
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The `release` workflow then builds `prf` for darwin and linux (amd64 and arm64), stamps the version,
+commit and date into it, and publishes tar.gz archives, `checksums.txt` and a changelog of the
+`feat` and `fix` commits as a GitHub release. To try the config locally without publishing:
+`go run github.com/goreleaser/goreleaser/v2@latest release --snapshot --clean` (writes `dist/`).
