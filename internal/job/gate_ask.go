@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
@@ -123,33 +122,15 @@ func (j *Job) askGate(ctx context.Context, p phase, step, model string, data rol
 		}
 
 		view := j.askView(p, path, question, rounds, len(rounds)+1)
-		srv.Set(review.PageWaiting, view)
-		j.setState(func(s *state.Job) {
-			s.State, s.Stage, s.Activity, s.ReviewURL = state.Ask, p.name, fmt.Sprintf("question %d", view.Round), srv.URL()
+		r, ok := j.awaitRound(srv, view, dir, p, step, pageWait{
+			state: state.Ask, activity: fmt.Sprintf("question %d", view.Round), event: "PRF_ASK", done: "PRF_ANSWERED",
+			why: p.asker.name + " has a question", what: "your answers", page: "question page", saved: "answers",
+			title: "prf: " + j.name + " has a question", body: fmt.Sprintf("%s, from %s", j.branch, p.asker.name),
 		})
-		j.event("PRF_ASK branch=%s phase=%s step=%s round=%d url=%s", j.branch, p.name, step, view.Round, srv.URL())
-		j.logf("[%s] %s: %s has a question: waiting for your answers at %s", step, p.name, p.asker.name, srv.URL())
-		j.rt.Notify("prf: "+j.name+" has a question", fmt.Sprintf("%s, from %s", j.branch, p.asker.name))
-		if j.reviewOpen && !srv.Watched() {
-			if err := j.rt.OpenBrowser(srv.URL()); err != nil {
-				j.logf("opening the question page: %v", err)
-			}
-		}
-
-		var r review.Round
-		select {
-		case r = <-srv.Submitted():
-		case <-j.sigs:
-			j.logf("[%s] %s: interrupted while waiting for your answers", step, p.name)
+		if !ok {
 			return end(130, "")
 		}
-		r.Round, r.Commit, r.Submitted, r.Question = view.Round, view.Head, time.Now(), question
 		rounds = append(rounds, r)
-		if err := review.WriteRound(dir, r); err != nil {
-			j.logf("saving the answers: %v", err)
-		}
-		j.setState(func(s *state.Job) { s.State, s.Activity, s.ReviewURL = state.Running, "", "" })
-		j.event("PRF_ANSWERED branch=%s phase=%s step=%s round=%d verdict=%s comments=%d", j.branch, p.name, step, r.Round, r.Verdict, len(r.Comments))
 		if r.Verdict == review.Stop {
 			page(review.PageStopped)
 			j.logf("[%s] %s: you stopped the job at question %d", step, p.name, r.Round)

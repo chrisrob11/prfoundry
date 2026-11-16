@@ -224,25 +224,39 @@ func (a *app) options(c *cli.Command, name, recorded string) (job.Options, error
 }
 
 // newJob makes run's or apply's job, in repo name, from its flags: the
-// steps to run, and the PR spec, looked up in prDir too.
-func (a *app) newJob(c *cli.Command, name, prDir string, steps []pipeline.Step, pipelineName string) (*job.Job, job.Options, error) {
+// steps to run (see jobRoles for useDefault), and the PR spec, looked up in
+// prDir too. Its error is a usage error, ready to return.
+func (a *app) newJob(c *cli.Command, name, prDir string, useDefault bool) (*job.Job, job.Options, error) {
+	usage := func(err error) (*job.Job, job.Options, error) {
+		return nil, job.Options{}, cli.Exit("prf: "+err.Error(), job.ExitUsage)
+	}
+	if !itemname.Valid(name) {
+		return usage(fmt.Errorf("can't use %q as a repo name; add an alias for it in %s", name, config.FileName))
+	}
+	steps, pipelineName, err := jobRoles(c, a.home, name, useDefault)
+	if err != nil {
+		return usage(err)
+	}
 	o, err := a.options(c, name, "")
 	if err != nil {
-		return nil, o, err
+		return usage(err)
 	}
 	if o.Agent.Name() == agent.OpenCode {
 		if err := checkOpenCodeSteps(c, steps); err != nil {
-			return nil, o, err
+			return usage(err)
 		}
 	}
 	o.Steps, o.Pipeline, o.Task = steps, pipelineName, c.String("prompt")
 	if o.PR, err = resolvePR(c.String("pr"), prDir); err != nil {
-		return nil, o, err
+		return usage(err)
 	}
 	o.Workdir, o.Out, o.Status, o.In = flagOr(c, "workdir", a.cfg.Workdir), c.String("out"), c.String("status"), c.String("in")
 	o.AgentArgs = append(append([]string{}, a.agentArgs(o.Agent)...), c.Args().Slice()...)
 	j, err := job.New(o)
-	return j, o, err
+	if err != nil {
+		return usage(err)
+	}
+	return j, o, nil
 }
 
 // checkOpenCodeSteps refuses steps opencode can't run as given: a model
@@ -273,17 +287,9 @@ func (a *app) runCmd(ctx context.Context, c *cli.Command) error {
 		}
 		url, name = repo.URL, repoArg
 	}
-
-	if !itemname.Valid(name) {
-		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, config.FileName), job.ExitUsage)
-	}
-	steps, pipelineName, err := jobRoles(c, a.home, name, true)
+	j, o, err := a.newJob(c, name, firstNonEmpty(repo.PRDir, a.cfg.PRDir), true)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
-	}
-	j, o, err := a.newJob(c, name, firstNonEmpty(repo.PRDir, a.cfg.PRDir), steps, pipelineName)
-	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
+		return err
 	}
 
 	branch := c.String("branch")
@@ -316,18 +322,9 @@ func (a *app) applyCmd(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
-	name := firstNonEmpty(repoName, filepath.Base(dir))
-	if !itemname.Valid(name) {
-		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, config.FileName), job.ExitUsage)
-	}
-
-	steps, pipelineName, err := jobRoles(c, a.home, name, false)
+	j, _, err := a.newJob(c, firstNonEmpty(repoName, filepath.Base(dir)), firstNonEmpty(repo.PRDir, a.cfg.PRDir), false)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
-	}
-	j, _, err := a.newJob(c, name, firstNonEmpty(repo.PRDir, a.cfg.PRDir), steps, pipelineName)
-	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
+		return err
 	}
 	return j.Apply(ctx, dir, c.String("branch"))
 }

@@ -207,17 +207,26 @@ func (a *app) pipelineSet(ctx context.Context, c *cli.Command) error {
 	return nil
 }
 
-func (a *app) pipelineRemove(ctx context.Context, c *cli.Command) error {
-	repo, name, err := repoAndName(c)
-	if err != nil {
-		return err
+// namedPipeline is --repo, its pipelines, and the --pipeline among them it
+// names, which must exist.
+func (a *app) namedPipeline(c *cli.Command) (repo, name string, p pipeline.File, err error) {
+	if repo, name, err = repoAndName(c); err != nil {
+		return "", "", p, err
 	}
 	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
+		return "", "", p, cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	if _, ok := p.Pipelines[name]; !exists || !ok {
-		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), job.ExitUsage)
+		return "", "", p, cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), job.ExitUsage)
+	}
+	return repo, name, p, nil
+}
+
+func (a *app) pipelineRemove(ctx context.Context, c *cli.Command) error {
+	repo, name, p, err := a.namedPipeline(c)
+	if err != nil {
+		return err
 	}
 	delete(p.Pipelines, name)
 	if p.Default == name {
@@ -232,16 +241,9 @@ func (a *app) pipelineRemove(ctx context.Context, c *cli.Command) error {
 }
 
 func (a *app) pipelineDefault(ctx context.Context, c *cli.Command) error {
-	repo, name, err := repoAndName(c)
+	repo, name, p, err := a.namedPipeline(c)
 	if err != nil {
 		return err
-	}
-	p, exists, err := pipeline.Read(a.home, repo)
-	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
-	}
-	if _, ok := p.Pipelines[name]; !exists || !ok {
-		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), job.ExitUsage)
 	}
 	p.Default = name
 	if err := pipeline.Write(a.home, repo, p); err != nil {
