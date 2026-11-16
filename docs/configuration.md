@@ -99,15 +99,21 @@ What differs on opencode:
 |---|---|
 | Models | `opencode_model` (conf.json, pipeline.json, a step) and `--model` are `provider/model`, as `opencode models` lists them. `model` and `--role role:model` name Claude models: a step's `model` is ignored, and `--role role:model` is refused |
 | `--sandbox` | Refused: opencode has no sandbox. Run it with `--sandbox=false` or `"sandbox": false`, so `@check` commands run unsandboxed too |
-| `--mode` | Mapped to opencode's permission rules: `default` and `dontAsk` allow reads only, `acceptEdits` reads and edits, `plan` reads and denies edits and shell commands, and `bypassPermissions` approves everything else (`--auto`). What a mode doesn't allow, such as a shell command under `acceptEdits`, opencode refuses, since nobody can approve it; to let a step run the tests, use `bypassPermissions`. `auto` is refused. In every mode `git push`, `gh` and writing opencode's own config are denied |
+| `--mode` | Mapped to opencode's permission rules: `default` and `dontAsk` allow reads only, `acceptEdits` reads and edits, `plan` reads and denies edits and shell commands, and `bypassPermissions` approves everything else (`--auto`). Every mode but `bypassPermissions` also allows opencode's todo list, subagents and skills, and starts by overriding opencode's built-in allow-everything, so what a mode doesn't allow, such as a shell command under `acceptEdits`, a web fetch, or a folder outside the checkout and the job's own, opencode refuses, since nobody can approve it; to let a step run the tests, use `bypassPermissions`. `auto` is refused. In every mode `git push`, `gh` and writing opencode's own config are denied |
 | Budgets | opencode has no budget of its own: prf adds up the cost opencode reports after each model call and stops the run (exit 5) once it reaches the step's budget, so a step can overshoot by one call. A model opencode prices at $0, like a subscription or a local one, is never stopped. opencode doesn't always report its last call, so costs can be low by one call |
 | Usage limits | A rate limit, or a workspace's usage limit, pauses the job like Claude's: until the time opencode gives, or 30 minutes. A free-tier or per-model spend limit fails the step, since waiting won't help |
 | Logs | `claude.log` and `claude.jsonl` hold opencode's steps and events too |
 
-`opencode_args` and anything after `--` go to `opencode run`: `["--agent", "plan"]` picks an
-opencode agent. A repo's own `opencode.json` still applies. prf's permission rules come after its
-top-level `permissions`, but an agent's own `permissions` there come later still and win, so
-check a repo's `opencode.json` before running it.
+`opencode_args` and anything after `--` go to `opencode run`: `["--agent", "plan"]` picks one of
+opencode's built-in agents, or one from your own opencode config.
+
+A repo's own opencode config is never loaded. opencode merges a project's config after prf's
+rules, and an agent's `permissions` there would win over them, `gh` and `git push` included, so
+prf turns project config off for every step (`OPENCODE_CONFIG_PROJECT_DISABLE=1`, overriding your
+environment). That covers `opencode.json` and `opencode.jsonc` in the checkout and in every folder
+above it, and the `.opencode/`, `.claude/` and `.agents/` folders, with their agents, plugins,
+tools and skills. prf hands opencode the checkout's `AGENTS.md` itself, so a repo's instructions
+still reach the agent. Your global config (`~/.config/opencode`) still applies.
 
 ## pipeline.json
 
