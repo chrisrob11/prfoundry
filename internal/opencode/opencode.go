@@ -53,21 +53,17 @@ func Check(mode, model string, sandboxed bool) error {
 	return err
 }
 
-// noProjectConfig turns off every config opencode would find in the
-// checkout or a folder above it: opencode.json and opencode.jsonc,
-// .opencode/ (agents, plugins, tools), .claude/ and .agents/. Each of those
-// is merged after OPENCODE_CONFIG_CONTENT's permissions or loads code, so a
-// cloned repo could otherwise undo prf's rules. opencode reads the first
-// name and falls back to the second; prf's values come last in the
-// environment, so they beat the user's.
+// noProjectConfig turns off the config opencode finds in or above the
+// checkout (opencode.json[c], .opencode/, .claude/, .agents/), which merges
+// over prf's permissions or loads code. opencode reads the first name, else
+// the second; prf's come last in the environment, so they beat the user's.
 var noProjectConfig = []string{"OPENCODE_CONFIG_PROJECT_DISABLE=1", "OPENCODE_DISABLE_PROJECT_CONFIG=1"}
 
 // Command is opencode's arguments for c in the checkout dir, and its
-// environment: PWD, which opencode takes as its project folder over its
-// working directory, noProjectConfig, and the config for c's mode, which
-// names the checkout's AGENTS.md since the project config no longer does.
-// It runs a private server (--standalone), so that environment reaches its
-// tools.
+// environment: PWD (opencode's project folder, over its working directory),
+// noProjectConfig, and c's mode's config, naming the checkout's AGENTS.md
+// since the project config no longer does. --standalone runs a private
+// server, so that environment reaches its tools.
 func (Agent) Command(c agent.Call, dir string) (agent.Command, error) {
 	if err := Check(c.Mode, c.Model, c.Settings != ""); err != nil {
 		return agent.Command{}, err

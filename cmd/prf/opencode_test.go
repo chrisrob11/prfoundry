@@ -13,18 +13,14 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
-// fakeOpenCode records each call in $FAKE_LOG as fakeClaude does, and its
-// permission config in <log>.config. It refuses a call that isn't
-// `opencode run --standalone --format json`. (It can't check PWD, which
-// opencode works in: sh resets it.) It prints the events of a real run
-// (internal/opencode/testdata/run.jsonl), then its last step's finish,
-// costing $0.05. Like opencode, it loads the checkout's opencode.json
-// unless OPENCODE_CONFIG_PROJECT_DISABLE (else OPENCODE_DISABLE_PROJECT_CONFIG)
-// is 1 or true, and then fails, so a test sees that the repo's config was
-// read. Its prompt is its last argument: one containing FAIL
-// prints an error and exits 1; COMMIT commits a change to fixed.txt; LIMIT
-// hits a rate limit while the count in $FAKE_LIMITS is above zero; BUDGET
-// spends $0.30 and waits to be interrupted.
+// fakeOpenCode logs each call as fakeClaude does, and its permission config in
+// <log>.config; it refuses all but `opencode run --standalone --format json`.
+// Like opencode, it reads the checkout's opencode.json, and then fails, unless
+// OPENCODE_CONFIG_PROJECT_DISABLE (else OPENCODE_DISABLE_PROJECT_CONFIG) is 1
+// or true. It prints a real run's events (internal/opencode/testdata/run.jsonl)
+// and a $0.05 finish. By its prompt, its last argument: FAIL errors, exits 1;
+// COMMIT commits to fixed.txt; LIMIT rate-limits while $FAKE_LIMITS counts
+// down above zero; BUDGET spends $0.30 and waits to be interrupted.
 const fakeOpenCode = `#!/bin/sh
 for prompt; do :; done
 printf '%s\n%s\n---\n' "$(pwd)" "$*" >> "$FAKE_LOG"

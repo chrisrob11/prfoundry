@@ -60,10 +60,9 @@ func (j *Job) runPhases(ctx context.Context, phases []phase) (err error) {
 		j.feed = io.MultiWriter(logFile, j.stderr)
 	}
 
-	// Catch Ctrl-C, TERM and a closed terminal (HUP) so Claude (same process
-	// group) handles them and we still report PRF_DONE afterwards. A gate
-	// waits on them, and a check gate stops its command, which has a group
-	// of its own.
+	// Catch Ctrl-C, TERM and HUP so Claude (same process group) handles them
+	// and we still report PRF_DONE. A gate waits on them; a check gate stops
+	// its command, which has a process group of its own.
 	j.sigs = make(chan os.Signal, 1)
 	signal.Notify(j.sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(j.sigs)

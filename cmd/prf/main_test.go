@@ -22,15 +22,14 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// fakeClaude records each call as "cwd\nargs\n---\n" in the log, and the
-// mise trust paths it saw in <log>.mise. It speaks stream-json: a tool call,
-// a message, and a result costing $0.05. A prompt containing FAIL exits 1;
-// ERROR reports an error but exits 0; BUDGET stops at its budget; SLOW takes
-// half a second. A prompt containing ASK writes a question to $FAKE_ASK_PATH
-// ($PRF_TMP/stop.md if unset) while the count in $FAKE_ASKS is above
-// zero, and counts it down; one containing ANSWER deletes the question; one
-// containing COMMIT commits a change to fixed.txt; DIRTY leaves seven
-// untracked files. One containing $FAKE_FAIL_ON, if set, fails like FAIL.
+// fakeClaude logs each call as "cwd\nargs\n---\n", and the mise trust paths
+// it saw in <log>.mise, then speaks stream-json: a tool call, a message, a
+// $0.05 result. By prompt: FAIL exits 1; ERROR reports an error but exits 0;
+// BUDGET stops at its budget; SLOW takes half a second; ASK writes a question
+// to $FAKE_ASK_PATH ($PRF_TMP/stop.md if unset) while $FAKE_ASKS counts down
+// above zero, and ANSWER deletes it; LIMIT hits the usage limit likewise with
+// $FAKE_LIMITS; COMMIT commits to fixed.txt; DIRTY leaves seven untracked
+// files; one holding $FAKE_FAIL_ON, if set, fails like FAIL.
 const fakeClaude = `#!/bin/sh
 printf '%s\n%s\n---\n' "$(pwd)" "$*" >> "$FAKE_LOG"
 FAKE_ASK_PATH=${FAKE_ASK_PATH:-$PRF_TMP/stop.md}
