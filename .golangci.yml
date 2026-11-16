@@ -31,3 +31,8 @@ formatters:
 
 run:
   timeout: 5m
+
+issues:
+  # Report every finding: the defaults cap the list, hiding the real size.
+  max-issues-per-linter: 0
+  max-same-issues: 0
