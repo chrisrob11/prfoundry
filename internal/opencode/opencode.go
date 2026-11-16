@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"regexp"
 
 	"github.com/chrisrob11/prfoundry/internal/agent"
@@ -52,16 +53,30 @@ func Check(mode, model string, sandboxed bool) error {
 	return err
 }
 
+// noProjectConfig turns off every config opencode would find in the
+// checkout or a folder above it: opencode.json and opencode.jsonc,
+// .opencode/ (agents, plugins, tools), .claude/ and .agents/. Each of those
+// is merged after OPENCODE_CONFIG_CONTENT's permissions or loads code, so a
+// cloned repo could otherwise undo prf's rules. opencode reads the first
+// name and falls back to the second; prf's values come last in the
+// environment, so they beat the user's.
+var noProjectConfig = []string{"OPENCODE_CONFIG_PROJECT_DISABLE=1", "OPENCODE_DISABLE_PROJECT_CONFIG=1"}
+
 // Command is opencode's arguments for c in the checkout dir, and its
 // environment: PWD, which opencode takes as its project folder over its
-// working directory, and the permission config for c's mode. It runs a
-// private server (--standalone), so that environment reaches its tools.
+// working directory, noProjectConfig, and the config for c's mode, which
+// names the checkout's AGENTS.md since the project config no longer does.
+// It runs a private server (--standalone), so that environment reaches its
+// tools.
 func (Agent) Command(c agent.Call, dir string) (agent.Command, error) {
 	if err := Check(c.Mode, c.Model, c.Settings != ""); err != nil {
 		return agent.Command{}, err
 	}
 	rules, auto, _ := modeRules(c.Mode)
-	conf, err := json.Marshal(map[string]any{"permissions": permissions(rules, c.Dirs)})
+	conf, err := json.Marshal(map[string]any{
+		"permissions":  permissions(rules, c.Dirs),
+		"instructions": []string{filepath.Join(dir, "AGENTS.md")},
+	})
 	if err != nil {
 		return agent.Command{}, err
 	}
@@ -73,7 +88,8 @@ func (Agent) Command(c agent.Call, dir string) (agent.Command, error) {
 		args = append(args, "--auto")
 	}
 	args = append(append(args, c.Extra...), c.Prompt)
-	return agent.Command{Args: args, Env: []string{"PWD=" + dir, "OPENCODE_CONFIG_CONTENT=" + string(conf)}}, nil
+	env := append([]string{"PWD=" + dir, "OPENCODE_CONFIG_CONTENT=" + string(conf)}, noProjectConfig...)
+	return agent.Command{Args: args, Env: env}, nil
 }
 
 // Follow reads opencode's JSON events; see follow.

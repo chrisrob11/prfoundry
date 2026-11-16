@@ -27,6 +27,24 @@ func config(t *testing.T, cmd agent.Command) []rule {
 	return nil
 }
 
+// instructions are the files a command's config hands opencode as
+// instructions.
+func instructions(t *testing.T, cmd agent.Command) []string {
+	t.Helper()
+	for _, kv := range cmd.Env {
+		if v, ok := strings.CutPrefix(kv, "OPENCODE_CONFIG_CONTENT="); ok {
+			var c struct {
+				Instructions []string `json:"instructions"`
+			}
+			if err := json.Unmarshal([]byte(v), &c); err != nil {
+				t.Fatal(err)
+			}
+			return c.Instructions
+		}
+	}
+	return nil
+}
+
 // effect is what the last rule matching action and resource exactly says.
 func effect(rules []rule, action, resource string) string {
 	e := "ask"
@@ -50,6 +68,14 @@ func TestCommand(t *testing.T) {
 	}
 	if !slices.Contains(cmd.Env, "PWD=/job/repo") {
 		t.Errorf("env %q doesn't point PWD at the checkout", cmd.Env)
+	}
+	for _, kv := range []string{"OPENCODE_CONFIG_PROJECT_DISABLE=1", "OPENCODE_DISABLE_PROJECT_CONFIG=1"} {
+		if !slices.Contains(cmd.Env, kv) {
+			t.Errorf("env %q lets opencode load the repo's own config: no %s", cmd.Env, kv)
+		}
+	}
+	if got := instructions(t, cmd); !slices.Equal(got, []string{"/job/repo/AGENTS.md"}) {
+		t.Errorf("instructions = %q, want the checkout's AGENTS.md", got)
 	}
 	rules := config(t, cmd)
 	for _, check := range []struct{ action, resource, want string }{

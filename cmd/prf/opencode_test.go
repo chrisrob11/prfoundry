@@ -18,7 +18,10 @@ import (
 // `opencode run --standalone --format json`. (It can't check PWD, which
 // opencode works in: sh resets it.) It prints the events of a real run
 // (internal/opencode/testdata/run.jsonl), then its last step's finish,
-// costing $0.05. Its prompt is its last argument: one containing FAIL
+// costing $0.05. Like opencode, it loads the checkout's opencode.json
+// unless OPENCODE_CONFIG_PROJECT_DISABLE (else OPENCODE_DISABLE_PROJECT_CONFIG)
+// is 1 or true, and then fails, so a test sees that the repo's config was
+// read. Its prompt is its last argument: one containing FAIL
 // prints an error and exits 1; COMMIT commits a change to fixed.txt; LIMIT
 // hits a rate limit while the count in $FAKE_LIMITS is above zero; BUDGET
 // spends $0.30 and waits to be interrupted.
@@ -27,6 +30,11 @@ for prompt; do :; done
 printf '%s\n%s\n---\n' "$(pwd)" "$*" >> "$FAKE_LOG"
 printf '%s\n' "$OPENCODE_CONFIG_CONTENT" >> "$FAKE_LOG.config"
 [ "$1 $2 $3 $4" = "run --standalone --format json" ] || { echo "fake opencode: bad args: $*" >&2; exit 64; }
+case "${OPENCODE_CONFIG_PROJECT_DISABLE-$OPENCODE_DISABLE_PROJECT_CONFIG}" in 1|[Tt][Rr][Uu][Ee]) ;; *)
+  if [ -e opencode.json ]; then
+    printf '%s\n' '{"type":"error","error":{"type":"config","message":"loaded the repo opencode.json"}}'; exit 1
+  fi;;
+esac
 case "$prompt" in *LIMIT*)
   n=$(cat "$FAKE_LIMITS" 2>/dev/null || echo 0)
   if [ "$n" -gt 0 ]; then
@@ -105,6 +113,24 @@ func TestOpenCodeRun(t *testing.T) {
 	st := readState(t, jobDir)
 	if st.Agent != agent.OpenCode || st.State != state.Done || st.Cost < 0.149 || st.Models[1] != "ollama/gemma4:31b" {
 		t.Errorf("state = %+v", st)
+	}
+}
+
+// A repo's opencode.json, which could allow what prf denies, isn't loaded,
+// even when the user's environment asks opencode to load it.
+func TestOpenCodeIgnoresTheRepoConfig(t *testing.T) {
+	e := openCodeEnv(t, "")
+	t.Setenv("OPENCODE_CONFIG_PROJECT_DISABLE", "0")
+	writeFileT(t, filepath.Join(e.origin, "opencode.json"),
+		`{"agents": {"build": {"permissions": [{"action": "shell", "resource": "gh *", "effect": "allow"}]}}}`)
+	mustGit(t, e.origin, "add", "opencode.json")
+	mustGit(t, e.origin, "commit", "-q", "-m", "opencode config")
+
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
+		t.Fatalf("exit %d; log:\n%s", code, readFile(t, filepath.Join(e.root, "work", "origin", "b", "claude.log")))
+	}
+	if calls := e.calls(t); len(calls) != 3 {
+		t.Errorf("got %d opencode calls, want 3: %v", len(calls), calls)
 	}
 }
 
