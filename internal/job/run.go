@@ -11,11 +11,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/chrisrob11/prfoundry/internal/claude"
+	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/human"
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
@@ -137,11 +138,10 @@ func (j *Job) runPhases(phases []phase) (err error) {
 func (j *Job) runClaude(p phase, name, step, model string, data roles.Data, first bool) int {
 	for {
 		code := j.runClaudeOnce(p, name, step, model, data, first)
-		reset, hit := j.lastResult.LimitReset(time.Now())
-		if code == 0 || !hit {
+		if code == 0 || !j.lastResult.Limited {
 			return code
 		}
-		if !j.pauseUntil(step, name, reset) {
+		if !j.pauseUntil(step, name, j.lastResult.Reset) {
 			return 130
 		}
 		first = false // a streamed --in was read by the first try
@@ -157,7 +157,7 @@ func (j *Job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	if model != "" {
 		label += " (" + model + ")"
 	}
-	j.lastResult = claude.Result{}
+	j.lastResult = agent.Result{}
 	prompt, err := p.render(data)
 	if err != nil {
 		j.logf("rendering role %s: %v", name, err)
@@ -176,7 +176,7 @@ func (j *Job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 		}
 	}
 
-	call := claude.Call{Prompt: prompt, Mode: j.mode, Model: model, Budget: budget, Settings: j.settings, Extra: j.claudeArgs}
+	call := agent.Call{Prompt: prompt, Mode: j.mode, Model: model, Budget: budget, Settings: j.settings, Extra: j.agentArgs}
 	if j.pr != "" {
 		call.Dirs = append(call.Dirs, filepath.Dir(j.pr))
 	}
@@ -187,11 +187,17 @@ func (j *Job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	if len(j.contextFiles) > 0 {
 		call.Dirs = append(call.Dirs, j.contextDir)
 	}
-	cmd := exec.Command(j.claude, call.Args()...)
-	cmd.Dir, cmd.Env, cmd.Stderr = j.dir, j.env, j.feed
+	agentName := j.agent.Name()
+	start, err := j.agent.Command(call, j.dir)
+	if err != nil {
+		j.logf("running %s: %v", agentName, err)
+		return ExitUsage
+	}
+	cmd := exec.Command(j.agent.Bin(), start.Args...)
+	cmd.Dir, cmd.Env, cmd.Stderr = j.dir, withEnv(j.env, start.Env), j.feed
 	stream, err := cmd.StdoutPipe()
 	if err != nil {
-		j.logf("running claude: %v", err)
+		j.logf("running %s: %v", agentName, err)
 		return ExitSetup
 	}
 	stdin, err := openInput(j.in, first)
@@ -210,13 +216,13 @@ func (j *Job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	j.setState(func(s *state.Job) { s.State, s.Stage, s.Activity, s.ReviewURL = state.Running, name, "", "" })
 	j.logf("[%s] %s: started", step, label)
 	_, _ = fmt.Fprintf(j.feed, "=== prf phase %s (step %s, pipeline %s%s) ===\n", name, step, pipelineName, strings.ReplaceAll(modelField, "=", " "))
-	phaseStart, prog := time.Now(), &claude.Progress{}
+	phaseStart, prog := time.Now(), &agent.Progress{}
 	expect, startHead := j.expectOf(p), ""
 	if expect != "" {
 		startHead = gitx.Output(j.dir, "rev-parse", "HEAD")
 	}
 	if err := cmd.Start(); err != nil {
-		j.logf("running claude: %v", err)
+		j.logf("running %s: %v", agentName, err)
 		return ExitSetup
 	}
 	stopHeartbeat, heartbeatDone := make(chan struct{}), make(chan struct{})
@@ -226,8 +232,15 @@ func (j *Job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 			j.setState(func(s *state.Job) { s.Activity = last })
 		})
 	}()
-	res := claude.Follow(stream, j.raw, j.feed, prog, j.dir)
+	var kill *time.Timer
+	res := j.agent.Follow(stream, agent.Output{Raw: j.raw, Feed: j.feed, Progress: prog, Dir: j.dir, Budget: budget, Stop: func() {
+		_ = cmd.Process.Signal(os.Interrupt)
+		kill = time.AfterFunc(j.grace, func() { _ = cmd.Process.Kill() })
+	}})
 	err = cmd.Wait()
+	if kill != nil {
+		kill.Stop()
+	}
 	close(stopHeartbeat)
 	<-heartbeatDone // so no "working" line follows the phase's result
 	if f, ok := stdin.(*os.File); ok && f != os.Stdin {
@@ -236,7 +249,7 @@ func (j *Job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	if err != nil {
 		var exitErr *exec.ExitError
 		if !errors.As(err, &exitErr) {
-			j.logf("running claude: %v", err)
+			j.logf("running %s: %v", agentName, err)
 			return ExitSetup
 		}
 	}
@@ -246,9 +259,9 @@ func (j *Job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 		code = 130
 	}
 	if res.IsError && code == 0 {
-		code = 1 // Claude said the run failed even though it exited cleanly
+		code = 1 // the agent said the run failed even though it exited cleanly
 	}
-	overBudget := res.OverBudget()
+	overBudget := res.OverBudget
 	if overBudget {
 		code = ExitBudget
 	}
@@ -437,7 +450,7 @@ const stateEvery = 2 * time.Second
 
 // heartbeat prints a "working" line every interval, and passes Claude's
 // latest activity to save every stateEvery, until stop closes.
-func (j *Job) heartbeat(interval time.Duration, step, name string, start time.Time, prog *claude.Progress, stop <-chan struct{}, save func(last string)) {
+func (j *Job) heartbeat(interval time.Duration, step, name string, start time.Time, prog *agent.Progress, stop <-chan struct{}, save func(last string)) {
 	tick, saveTick := time.NewTicker(interval), time.NewTicker(min(stateEvery, interval))
 	defer tick.Stop()
 	defer saveTick.Stop()
@@ -463,7 +476,7 @@ func (j *Job) heartbeat(interval time.Duration, step, name string, start time.Ti
 }
 
 // resultNote describes Claude's result event for a progress line.
-func resultNote(res claude.Result) string {
+func resultNote(res agent.Result) string {
 	if !res.Got {
 		return ""
 	}
@@ -472,6 +485,17 @@ func resultNote(res claude.Result) string {
 		note = fmt.Sprintf(" (Claude reported an error: %s)", human.OneLine(res.Text, 160))
 	}
 	return note
+}
+
+// withEnv is env with extra added; a nil env is prf's own environment.
+func withEnv(env, extra []string) []string {
+	if len(extra) == 0 {
+		return env
+	}
+	if env == nil {
+		env = os.Environ()
+	}
+	return append(slices.Clip(env), extra...)
 }
 
 // openAppend opens path for appending, creating it and its parent dirs.

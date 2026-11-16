@@ -78,7 +78,7 @@ func (a *app) resume(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	o.Workdir, o.PR, o.Task, o.Pipeline = workdir, st.PR, st.Task, st.Pipeline
-	o.ClaudeArgs = append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Tail()...)
+	o.AgentArgs = append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Tail()...)
 	if !c.IsSet("push") && !c.IsSet("pr-create") {
 		o.Push, o.PRCreate = st.Push, st.PRCreate // ship the way the job was started
 	}

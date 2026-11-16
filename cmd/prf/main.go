@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/chrisrob11/prfoundry/internal/claude"
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/itemname"
 	"github.com/chrisrob11/prfoundry/internal/job"
@@ -156,7 +157,7 @@ func (a *app) options(c *cli.Command, name string) (job.Options, error) {
 		Push: repo.Push, PRCreate: repo.PRCreate, Base: flagOr(c, "base", repo.Base),
 		PRTitleFile: repo.PRTitleFile, PRBodyFile: repo.PRBodyFile,
 		JobEnv: repo.JobEnv, JobSeed: repo.JobSeed,
-		Verbose: c.Bool("verbose"), Mode: flagOr(c, "mode", a.cfg.Mode), Claude: resolveBinary(flagOr(c, "claude", a.cfg.Claude)),
+		Verbose: c.Bool("verbose"), Mode: flagOr(c, "mode", a.cfg.Mode), Agent: claude.New(resolveBinary(flagOr(c, "claude", a.cfg.Claude))),
 		Sandbox: a.sandboxOn(c), ReviewOpen: a.reviewOpen(c),
 		Stdout: c.Root().Writer, Stderr: a.stderr, Runtime: a.rt,
 	}
@@ -191,7 +192,7 @@ func (a *app) newJob(c *cli.Command, name, prDir string, steps []pipeline.Step, 
 		return nil, o, err
 	}
 	o.Workdir, o.Out, o.Status, o.In = flagOr(c, "workdir", a.cfg.Workdir), c.String("out"), c.String("status"), c.String("in")
-	o.ClaudeArgs = append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Slice()...)
+	o.AgentArgs = append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Slice()...)
 	j, err := job.New(o)
 	return j, o, err
 }

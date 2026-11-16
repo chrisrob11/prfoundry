@@ -1,20 +1,45 @@
 package claude
 
-import "strconv"
+import (
+	"io"
+	"strconv"
+	"time"
 
-// Call is one headless `claude -p` run.
-type Call struct {
-	Prompt   string
-	Mode     string   // --permission-mode
-	Model    string   // "" for Claude's default
-	Budget   float64  // --max-budget-usd; 0 for none
-	Dirs     []string // --add-dir, in order
-	Settings string   // --settings; "" for none
-	Extra    []string // claude_args and the command line's, last so they win
+	"github.com/chrisrob11/prfoundry/internal/agent"
+)
+
+// Agent runs Claude Code headless: `claude -p`, reading its stream-json.
+type Agent struct {
+	bin string
 }
 
-// Args are claude's arguments for the call, asking for stream-json.
-func (c Call) Args() []string {
+// New is Claude Code run from bin.
+func New(bin string) Agent {
+	return Agent{bin: bin}
+}
+
+// Name is "claude".
+func (Agent) Name() string { return "claude" }
+
+// Bin is the claude binary.
+func (a Agent) Bin() string { return a.bin }
+
+// Command is claude's arguments for c, asking for stream-json. Claude runs
+// in the checkout, so dir isn't one of them.
+func (Agent) Command(c agent.Call, _ string) (agent.Command, error) {
+	return agent.Command{Args: args(c)}, nil
+}
+
+// Follow reads Claude's stream-json; see follow. Claude holds to its own
+// budget, so out.Budget and out.Stop aren't used.
+func (Agent) Follow(r io.Reader, out agent.Output) agent.Result {
+	res := follow(r, out.Raw, out.Feed, out.Progress, out.Dir)
+	res.Reset, res.Limited = limitReset(res, time.Now())
+	return res
+}
+
+// args are claude's arguments for c, asking for stream-json.
+func args(c agent.Call) []string {
 	args := []string{"-p", c.Prompt, "--permission-mode", c.Mode, "--output-format", "stream-json", "--verbose"}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model) // before Extra, so an explicit --model there still wins
