@@ -9,6 +9,12 @@ import (
 	"time"
 )
 
+// The agents prf runs, as conf.json, --agent and state.json name them.
+const (
+	Claude   = "claude"
+	OpenCode = "opencode"
+)
+
 // Agent is a coding agent prf runs headless, one run per phase.
 type Agent interface {
 	// Name is the agent as state.json and prf's lines name it.

@@ -83,6 +83,7 @@ func (j *Job) runPhases(phases []phase) (err error) {
 	}
 	j.setState(func(s *state.Job) {
 		s.Pipeline, s.PR, s.Task, s.Push, s.PRCreate = pipelineName, j.pr, j.task, j.push, j.prCreate
+		s.Agent = j.agent.Name()
 		if j.firstStep == 0 {
 			s.Roles, s.Models, s.Steps = names, models, j.roles
 		} else if len(s.Models) == total {
@@ -298,13 +299,13 @@ func (j *Job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	took := human.Duration(time.Since(phaseStart))
 	switch {
 	case code == 0:
-		j.logf("[%s] %s: done in %s%s", step, label, took, resultNote(res))
+		j.logf("[%s] %s: done in %s%s", step, label, took, resultNote(res, agentName))
 	case overBudget:
 		j.logf("[%s] %s: stopped after %s: reached its %s budget (%s spent)", step, label, took, human.USD(budget), human.USD(res.Cost))
 	case broke != "":
 		j.logf("[%s] %s: failed after %s: expected %s, but it %s", step, label, took, expect, broke)
 	default:
-		j.logf("[%s] %s: failed (exit %d) after %s%s", step, label, code, took, resultNote(res))
+		j.logf("[%s] %s: failed (exit %d) after %s%s", step, label, code, took, resultNote(res, agentName))
 	}
 	return code
 }
@@ -475,14 +476,19 @@ func (j *Job) heartbeat(interval time.Duration, step, name string, start time.Ti
 	}
 }
 
-// resultNote describes Claude's result event for a progress line.
-func resultNote(res agent.Result) string {
+// resultNote describes the result the agent agentName reported, for a
+// progress line.
+func resultNote(res agent.Result, agentName string) string {
 	if !res.Got {
 		return ""
 	}
 	note := fmt.Sprintf(" (%d turns, $%.2f)", res.Turns, res.Cost)
 	if res.IsError {
-		note = fmt.Sprintf(" (Claude reported an error: %s)", human.OneLine(res.Text, 160))
+		who := "Claude"
+		if agentName != agent.Claude {
+			who = agentName
+		}
+		note = fmt.Sprintf(" (%s reported an error: %s)", who, human.OneLine(res.Text, 160))
 	}
 	return note
 }

@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
+	"github.com/chrisrob11/prfoundry/internal/opencode"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
@@ -28,24 +30,29 @@ const (
 
 // Config is home/conf.json. Flags and env vars override it.
 type Config struct {
-	Workdir      string          `json:"workdir,omitempty"`
-	PRDir        string          `json:"pr_dir,omitempty"`
-	BranchPrefix string          `json:"branch_prefix,omitempty"`
-	Mode         string          `json:"mode,omitempty"`
-	Model        string          `json:"model,omitempty"`
-	MaxCost      float64         `json:"max_cost,omitempty"`
-	MaxStepCost  float64         `json:"max_step_cost,omitempty"`
-	Claude       string          `json:"claude,omitempty"`
-	ClaudeArgs   []string        `json:"claude_args,omitempty"`
-	Sandbox      *bool           `json:"sandbox,omitempty"`
-	ReviewOpen   *bool           `json:"review_open,omitempty"`      // open the page when a job reaches a @review or @ask gate; default true
-	MaxDisk      int             `json:"max_disk_percent,omitempty"` // run refuses to clone when the workdir's disk is this full; 0 is off
-	Repos        map[string]Repo `json:"repos,omitempty"`
+	Workdir       string          `json:"workdir,omitempty"`
+	PRDir         string          `json:"pr_dir,omitempty"`
+	BranchPrefix  string          `json:"branch_prefix,omitempty"`
+	Mode          string          `json:"mode,omitempty"`
+	Model         string          `json:"model,omitempty"`
+	MaxCost       float64         `json:"max_cost,omitempty"`
+	MaxStepCost   float64         `json:"max_step_cost,omitempty"`
+	Agent         string          `json:"agent,omitempty"` // claude (the default) or opencode
+	Claude        string          `json:"claude,omitempty"`
+	ClaudeArgs    []string        `json:"claude_args,omitempty"`
+	OpenCode      string          `json:"opencode,omitempty"` // the opencode binary
+	OpenCodeArgs  []string        `json:"opencode_args,omitempty"`
+	OpenCodeModel string          `json:"opencode_model,omitempty"` // opencode's model for steps that name none
+	Sandbox       *bool           `json:"sandbox,omitempty"`
+	ReviewOpen    *bool           `json:"review_open,omitempty"`      // open the page when a job reaches a @review or @ask gate; default true
+	MaxDisk       int             `json:"max_disk_percent,omitempty"` // run refuses to clone when the workdir's disk is this full; 0 is off
+	Repos         map[string]Repo `json:"repos,omitempty"`
 }
 
 // Repo is a repo alias: --repo <alias> picks up these settings.
 type Repo struct {
 	URL         string            `json:"url,omitempty"`
+	Agent       string            `json:"agent,omitempty"` // over the config's
 	Path        string            `json:"path,omitempty"`
 	Base        string            `json:"base,omitempty"`
 	PRDir       string            `json:"pr_dir,omitempty"`
@@ -114,6 +121,9 @@ func Read(path string) (Config, error) {
 		if r.PRCreate != "" && r.PRCreate != PRDraft && r.PRCreate != PRReady {
 			return Config{}, fmt.Errorf("%s: repo %s: pr_create must be %q or %q", path, name, PRDraft, PRReady)
 		}
+		if err := CheckAgent(r.Agent); err != nil {
+			return Config{}, fmt.Errorf("%s: repo %s: %w", path, name, err)
+		}
 		if err := jobenv.Check(r.JobEnv, r.JobSeed); err != nil {
 			return Config{}, fmt.Errorf("%s: repo %s: %w", path, name, err)
 		}
@@ -123,7 +133,22 @@ func Read(path string) (Config, error) {
 	if c.Model != "" && !pipeline.ValidModel(c.Model) {
 		return Config{}, fmt.Errorf("%s: invalid model %q", path, c.Model)
 	}
+	if c.OpenCodeModel != "" && !opencode.ValidModel(c.OpenCodeModel) {
+		return Config{}, fmt.Errorf("%s: opencode_model must be provider/model, not %q", path, c.OpenCodeModel)
+	}
+	if err := CheckAgent(c.Agent); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
 	return c, nil
+}
+
+// CheckAgent reports whether name is an agent prf runs, or "" for the default.
+func CheckAgent(name string) error {
+	switch name {
+	case "", agent.Claude, agent.OpenCode:
+		return nil
+	}
+	return fmt.Errorf("agent must be %q or %q, not %q", agent.Claude, agent.OpenCode, name)
 }
 
 // ConfiguredRepos returns the dirs in home that hold a pipeline.json or roles/.

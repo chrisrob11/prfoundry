@@ -191,7 +191,11 @@ type Job struct {
 // New loads every role the job's steps name, so a typo fails before any
 // git work happens. Its errors are usage errors.
 func New(o Options) (*Job, error) {
-	phases, err := loadPhases(o.Steps, roles.Dirs(o.Home, o.Repo), o.PR != "" || o.Task != "", o.Task != "")
+	steps := make([]pipeline.Step, len(o.Steps))
+	for i, s := range o.Steps {
+		steps[i] = stepFor(s, o.Agent.Name())
+	}
+	phases, err := loadPhases(steps, roles.Dirs(o.Home, o.Repo), o.PR != "" || o.Task != "", o.Task != "")
 	if err != nil {
 		return nil, err
 	}

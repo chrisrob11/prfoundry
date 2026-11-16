@@ -24,7 +24,7 @@ func New(bin string) Agent {
 }
 
 // Name is "opencode".
-func (Agent) Name() string { return "opencode" }
+func (Agent) Name() string { return agent.OpenCode }
 
 // Bin is the opencode binary.
 func (a Agent) Bin() string { return a.bin }

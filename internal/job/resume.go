@@ -1,11 +1,13 @@
 package job
 
 import (
+	"cmp"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
 
+	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/mise"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
@@ -14,7 +16,8 @@ import (
 
 // Resume carries on the job st, which has stopped, from step from
 // (counting from 1), in its checkout: same branch, PR spec, prompt, pipeline
-// and models, with the current role files and o's other settings. The
+// and models, and agent unless o names another (the models are then the
+// steps' own for it), with the current role files and o's other settings. The
 // setup isn't repeated, and steps keep their numbers. o's Steps, Out and
 // Status aren't used: the steps are st's, and the log and status file stay
 // in the job folder. Its error is the job's outcome, with prf's exit code.
@@ -25,13 +28,16 @@ func Resume(o Options, st state.Job, from int) error {
 	if len(st.Steps) == len(st.Roles) && st.Steps[first].Gate == pipeline.GateAsk && first > 0 {
 		first--
 	}
+	agentName := o.Agent.Name()
+	sameAgent := cmp.Or(st.Agent, agent.Claude) == agentName
 	steps := make([]pipeline.Step, 0, len(st.Roles)-first)
 	for i := first; i < len(st.Roles); i++ {
 		s, _ := pipeline.ParseStep(st.Roles[i])
 		if len(st.Steps) == len(st.Roles) {
 			s = st.Steps[i] // keeps a gate's settings
 		}
-		if i < len(st.Models) {
+		s = stepFor(s, agentName)
+		if sameAgent && i < len(st.Models) {
 			s.Model = st.Models[i]
 		}
 		steps = append(steps, s)

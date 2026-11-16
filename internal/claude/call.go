@@ -19,7 +19,7 @@ func New(bin string) Agent {
 }
 
 // Name is "claude".
-func (Agent) Name() string { return "claude" }
+func (Agent) Name() string { return agent.Claude }
 
 // Bin is the claude binary.
 func (a Agent) Bin() string { return a.bin }

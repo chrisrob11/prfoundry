@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/claude"
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/itemname"
 	"github.com/chrisrob11/prfoundry/internal/job"
+	"github.com/chrisrob11/prfoundry/internal/opencode"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/sandbox"
 	"github.com/urfave/cli/v3"
@@ -117,8 +119,15 @@ func phaseFlags(defaultPipeline string) []cli.Flag {
 		&cli.StringFlag{Name: "mode", Value: "acceptEdits", Usage: "Claude permission mode"},
 		&cli.BoolFlag{Name: "review-open", Value: true, Usage: "at a @review or @ask gate, open its page in your browser (--review-open=false only notifies; default: conf.json's review_open, else true)"},
 		&cli.BoolFlag{Name: "sandbox", Value: true, Usage: "run Claude in Claude Code's sandbox, with ~/.prf/[<repo>/]" + sandbox.SettingsFile + " (--sandbox=false turns it off)"},
+		agentFlag("(default: the repo alias's agent, else conf.json's, else claude)"),
 		&cli.StringFlag{Name: "claude", Value: "claude", Sources: cli.EnvVars("CLAUDE_BIN"), Usage: "claude binary"},
+		&cli.StringFlag{Name: "opencode", Value: "opencode", Sources: cli.EnvVars("OPENCODE_BIN"), Usage: "opencode binary"},
 	}
+}
+
+// agentFlag is --agent, with its default described by def.
+func agentFlag(def string) cli.Flag {
+	return &cli.StringFlag{Name: "agent", Usage: "the coding agent each step runs: " + agent.Claude + " or " + agent.OpenCode + " " + def}
 }
 
 func (a *app) logf(format string, args ...any) {
@@ -143,11 +152,37 @@ func (a *app) sandboxOn(c *cli.Command) bool {
 	return a.cfg.Sandbox == nil || *a.cfg.Sandbox
 }
 
+// agentOf is the agent a job runs: --agent if given, else recorded (a
+// resumed job's), else the repo alias's, else conf.json's, else claude.
+func (a *app) agentOf(c *cli.Command, repo config.Repo, recorded string) (string, error) {
+	name := firstNonEmpty(recorded, repo.Agent, a.cfg.Agent, agent.Claude)
+	if c.IsSet("agent") {
+		name = c.String("agent")
+	}
+	if err := config.CheckAgent(name); err != nil {
+		return "", fmt.Errorf("--%w", err)
+	}
+	return name, nil
+}
+
+// agentArgs are conf.json's arguments for the agent ag.
+func (a *app) agentArgs(ag agent.Agent) []string {
+	if ag.Name() == agent.OpenCode {
+		return a.cfg.OpenCodeArgs
+	}
+	return a.cfg.ClaudeArgs
+}
+
 // options are the settings run, apply and resume share for a job in repo
-// name: the flags, over the repo's pipeline.json and conf.json.
-func (a *app) options(c *cli.Command, name string) (job.Options, error) {
+// name: the flags, over the repo's pipeline.json and conf.json. recorded is
+// the agent a resumed job ran, or "".
+func (a *app) options(c *cli.Command, name, recorded string) (job.Options, error) {
 	p, _, _ := pipeline.Read(a.home, name)
 	repo := a.cfg.Repos[name]
+	agentName, err := a.agentOf(c, repo, recorded)
+	if err != nil {
+		return job.Options{}, err
+	}
 	o := job.Options{
 		Home: a.home, Repo: name,
 		Model: c.String("model"), DefaultModel: firstNonEmpty(p.Model, a.cfg.Model),
@@ -160,6 +195,13 @@ func (a *app) options(c *cli.Command, name string) (job.Options, error) {
 		Verbose: c.Bool("verbose"), Mode: flagOr(c, "mode", a.cfg.Mode), Agent: claude.New(resolveBinary(flagOr(c, "claude", a.cfg.Claude))),
 		Sandbox: a.sandboxOn(c), ReviewOpen: a.reviewOpen(c),
 		Stdout: c.Root().Writer, Stderr: a.stderr, Runtime: a.rt,
+	}
+	if agentName == agent.OpenCode {
+		o.Agent = opencode.New(resolveBinary(flagOr(c, "opencode", a.cfg.OpenCode)))
+		o.DefaultModel = firstNonEmpty(p.OpenCodeModel, a.cfg.OpenCodeModel)
+		if err := opencode.Check(o.Mode, o.Model, o.Sandbox); err != nil {
+			return o, err
+		}
 	}
 	if c.IsSet("pr-create") {
 		switch v := c.String("pr-create"); v {
@@ -183,18 +225,38 @@ func (a *app) options(c *cli.Command, name string) (job.Options, error) {
 // newJob makes run's or apply's job, in repo name, from its flags: the
 // steps to run, and the PR spec, looked up in prDir too.
 func (a *app) newJob(c *cli.Command, name, prDir string, steps []pipeline.Step, pipelineName string) (*job.Job, job.Options, error) {
-	o, err := a.options(c, name)
+	o, err := a.options(c, name, "")
 	if err != nil {
 		return nil, o, err
+	}
+	if o.Agent.Name() == agent.OpenCode {
+		if err := checkOpenCodeSteps(c, steps); err != nil {
+			return nil, o, err
+		}
 	}
 	o.Steps, o.Pipeline, o.Task = steps, pipelineName, c.String("prompt")
 	if o.PR, err = resolvePR(c.String("pr"), prDir); err != nil {
 		return nil, o, err
 	}
 	o.Workdir, o.Out, o.Status, o.In = flagOr(c, "workdir", a.cfg.Workdir), c.String("out"), c.String("status"), c.String("in")
-	o.AgentArgs = append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Slice()...)
+	o.AgentArgs = append(append([]string{}, a.agentArgs(o.Agent)...), c.Args().Slice()...)
 	j, err := job.New(o)
 	return j, o, err
+}
+
+// checkOpenCodeSteps refuses steps opencode can't run as given: a model
+// given with --role role:model, which is Claude's, and an opencode_model
+// that isn't provider/model.
+func checkOpenCodeSteps(c *cli.Command, steps []pipeline.Step) error {
+	for _, s := range steps {
+		if c.IsSet("role") && s.Model != "" {
+			return fmt.Errorf("--role %s: with opencode, give a step's model as opencode_model in %s, or --model for every step", s, pipeline.FileName)
+		}
+		if s.OpenCodeModel != "" && !opencode.ValidModel(s.OpenCodeModel) {
+			return fmt.Errorf("step %s: opencode_model must be provider/model, not %q", s.Name(), s.OpenCodeModel)
+		}
+	}
+	return nil
 }
 
 func (a *app) runCmd(ctx context.Context, c *cli.Command) error {
