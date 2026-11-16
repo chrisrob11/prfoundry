@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/job"
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // fakeGH records each call in $FAKE_GH_LOG. "pr list --state open" finds the
@@ -49,7 +52,7 @@ func TestPushAndPR(t *testing.T) {
 		"untitled": {"url": "{{origin}}", "pr_create": "ready", "pr_title_file": "TITLE.txt", "pr_body_file": "README.md"}
 	}`)
 	ghLog := withFakeGH(t)
-	captureStderr(t)
+	e.captureStderr()
 	run := func(repo, branch string, extra ...string) int {
 		removeFile(t, ghLog)
 		return e.run(t, append([]string{"run", "--repo", repo, "--branch", branch, "--prompt", "x", "--role", "review"}, extra...)...)
@@ -125,8 +128,8 @@ func TestPushAndPR(t *testing.T) {
 	})
 
 	t.Run("a missing title file means pushed but no PR, exit 4", func(t *testing.T) {
-		if code := run("untitled", "f"); code != exitShip {
-			t.Fatalf("exit %d, want %d", code, exitShip)
+		if code := run("untitled", "f"); code != job.ExitShip {
+			t.Fatalf("exit %d, want %d", code, job.ExitShip)
 		}
 		if !onOrigin("f") {
 			t.Error("should still have pushed")
@@ -141,8 +144,8 @@ func TestPushAndPR(t *testing.T) {
 		mustGit(t, "", "clone", "-q", e.origin, checkout)
 		mustGit(t, checkout, "remote", "set-url", "origin", "/nonexistent/repo")
 		removeFile(t, ghLog)
-		if code := e.run(t, "apply", "--dir", checkout, "--branch", "g", "--prompt", "x", "--pr-create", "draft"); code != exitShip {
-			t.Fatalf("exit %d, want %d", code, exitShip)
+		if code := e.run(t, "apply", "--dir", checkout, "--branch", "g", "--prompt", "x", "--pr-create", "draft"); code != job.ExitShip {
+			t.Fatalf("exit %d, want %d", code, job.ExitShip)
 		}
 		if readFile(t, ghLog) != "" {
 			t.Error("opened a PR after a failed push")
@@ -166,7 +169,7 @@ func TestPushAndPR(t *testing.T) {
 
 func TestResume(t *testing.T) {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	writeRole(t, e.roles, "test", "FAIL")
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "the task"); code != 1 {
 		t.Fatalf("run: exit %d", code)
@@ -193,12 +196,12 @@ func TestResume(t *testing.T) {
 		}
 	}
 	after := readState(t, jobDir)
-	if after.State != stateDone || after.Step != 3 || len(after.Roles) != 3 || !after.Started.Equal(before.Started) || after.Cost < before.Cost+0.099 {
+	if after.State != state.Done || after.Step != 3 || len(after.Roles) != 3 || !after.Started.Equal(before.Started) || after.Cost < before.Cost+0.099 {
 		t.Errorf("state after resume = %+v (before: %+v)", after, before)
 	}
 
-	if code := e.run(t, "resume", "origin/b"); code != exitUsage {
-		t.Errorf("resuming a finished job: exit %d, want %d", code, exitUsage)
+	if code := e.run(t, "resume", "origin/b"); code != job.ExitUsage {
+		t.Errorf("resuming a finished job: exit %d, want %d", code, job.ExitUsage)
 	}
 	removeFile(t, e.log)
 	if code := e.run(t, "resume", jobDir, "--from", "3"); code != 0 {
@@ -209,33 +212,15 @@ func TestResume(t *testing.T) {
 	}
 
 	running := after
-	running.State, running.PID = stateRunning, os.Getpid()
+	running.State, running.PID = state.Running, os.Getpid()
 	b, _ := json.Marshal(running)
-	writeFileT(t, filepath.Join(jobDir, stateFile), string(b))
-	if code := e.run(t, "resume", "origin/b", "--from", "1"); code != exitUsage {
-		t.Errorf("resuming a running job: exit %d, want %d", code, exitUsage)
+	writeFileT(t, filepath.Join(jobDir, state.FileName), string(b))
+	if code := e.run(t, "resume", "origin/b", "--from", "1"); code != job.ExitUsage {
+		t.Errorf("resuming a running job: exit %d, want %d", code, job.ExitUsage)
 	}
 	for _, args := range [][]string{{"resume"}, {"resume", "origin/nope"}, {"resume", "origin/b", "--from", "9"}} {
-		if code := e.run(t, args...); code != exitUsage {
-			t.Errorf("%v: exit %d, want %d", args, code, exitUsage)
-		}
-	}
-}
-
-// TestFindJobFromTheWorkdir: a job named from inside the workdir, where
-// <repo>/<job> is also a relative path, comes back with an absolute folder.
-func TestFindJobFromTheWorkdir(t *testing.T) {
-	workdir := t.TempDir()
-	jobDir := filepath.Join(workdir, "origin", "b")
-	writeFileT(t, filepath.Join(jobDir, stateFile), `{"repo":"origin"}`)
-	t.Chdir(workdir)
-	for _, target := range []string{"origin/b", jobDir} {
-		s, err := findJob("elsewhere", target)
-		if err != nil {
-			t.Fatalf("findJob(%q): %v", target, err)
-		}
-		if !sameDir(s.JobDir, jobDir) || !filepath.IsAbs(s.JobDir) {
-			t.Errorf("findJob(%q).JobDir = %q, want %q", target, s.JobDir, jobDir)
+		if code := e.run(t, args...); code != job.ExitUsage {
+			t.Errorf("%v: exit %d, want %d", args, code, job.ExitUsage)
 		}
 	}
 }
@@ -243,7 +228,7 @@ func TestFindJobFromTheWorkdir(t *testing.T) {
 func TestClean(t *testing.T) {
 	e := newEnv(t, `"repos": {"app": {"url": "{{origin}}", "push": true}}`)
 	withFakeGH(t)
-	captureStderr(t)
+	e.captureStderr()
 	for _, branch := range []string{"pushed", "unpushed", "dirty", "plain"} {
 		args := []string{"run", "--repo", "app", "--branch", branch, "--prompt", "x", "--role", "review"}
 		if branch != "pushed" {
@@ -267,7 +252,7 @@ func TestClean(t *testing.T) {
 		return err == nil
 	}
 
-	_, out := runPrfIO(t, "", "--home", e.home, "clean")
+	_, out := e.runIO(t, "clean")
 	for _, want := range []string{"remove  app/pushed", "remove  app/plain", "keep    app/unpushed", "1 commits not on any remote", "keep    app/dirty", "uncommitted changes", "dry run: would free"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry run missing %q:\n%s", want, out)
@@ -277,22 +262,22 @@ func TestClean(t *testing.T) {
 		t.Errorf("dry run removed something or picked a failed job:\n%s", out)
 	}
 
-	if _, out := runPrfIO(t, "", "--home", e.home, "clean", "--yes"); !strings.Contains(out, "freed") {
+	if _, out := e.runIO(t, "clean", "--yes"); !strings.Contains(out, "freed") {
 		t.Errorf("clean --yes:\n%s", out)
 	}
 	if exists("pushed") || exists("plain") || !exists("unpushed") || !exists("dirty") || !exists("failed") {
 		t.Error("clean --yes removed the wrong jobs")
 	}
-	runPrfIO(t, "", "--home", e.home, "clean", "--yes", "--failed", "--force")
+	e.runIO(t, "clean", "--yes", "--failed", "--force")
 	if exists("unpushed") || exists("dirty") || exists("failed") {
 		t.Error("--failed --force should remove the rest")
 	}
 
 	// A running job is never touched.
 	live := filepath.Join(e.root, "work", "app", "live")
-	b, _ := json.Marshal(jobState{Repo: "app", Job: "live", State: stateRunning, PID: os.Getpid(), JobDir: live, Started: time.Now(), Updated: time.Now()})
-	writeFileT(t, filepath.Join(live, stateFile), string(b))
-	runPrfIO(t, "", "--home", e.home, "clean", "--yes", "--failed", "--force")
+	b, _ := json.Marshal(state.Job{Repo: "app", Job: "live", State: state.Running, PID: os.Getpid(), JobDir: live, Started: time.Now(), Updated: time.Now()})
+	writeFileT(t, filepath.Join(live, state.FileName), string(b))
+	e.runIO(t, "clean", "--yes", "--failed", "--force")
 	if !exists("live") {
 		t.Error("clean removed a running job")
 	}

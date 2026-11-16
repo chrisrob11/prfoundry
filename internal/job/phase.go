@@ -1,6 +1,7 @@
-package main
+package job
 
 import (
+	"cmp"
 	"errors"
 	"text/template"
 	"time"
@@ -75,7 +76,7 @@ func loadPhases(steps []pipeline.Step, dirs []string, hasWork, hasTask bool) ([]
 			p.timeout, _ = time.ParseDuration(s.Timeout) // pipeline.CheckGate parsed it
 		}
 		if s.Gate == pipeline.GateAsk {
-			p.question = firstNonEmpty(s.Question, pipeline.DefaultQuestion)
+			p.question = cmp.Or(s.Question, pipeline.DefaultQuestion)
 			phases[len(phases)-1].asks = p.question
 			asker := phases[len(phases)-1]
 			p.asker = &asker

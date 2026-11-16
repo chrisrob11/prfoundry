@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 
 	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/chrisrob11/prfoundry/internal/sandbox"
@@ -19,8 +21,10 @@ import (
 // conf.json. newApp makes one, its Before hook fills it in, and the
 // commands are its methods.
 type app struct {
-	home string        // the prf home dir, normally ~/.prf
-	cfg  config.Config // home/conf.json; flags and env vars override it
+	home   string        // the prf home dir, normally ~/.prf
+	cfg    config.Config // home/conf.json; flags and env vars override it
+	stderr io.Writer     // progress, status lines and warnings
+	rt     job.Runtime   // how jobs reach your browser, desktop and disk
 }
 
 // loadConfig is the root Before hook: it sets home and cfg.

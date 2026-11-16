@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/chrisrob11/prfoundry/internal/itemname"
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
@@ -101,7 +102,7 @@ func (a *app) pipelineList(ctx context.Context, c *cli.Command) error {
 	}
 	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	var entries []pipelineEntry
 	for _, name := range slices.Sorted(maps.Keys(p.Pipelines)) {
@@ -143,7 +144,7 @@ func (a *app) pipelineShow(ctx context.Context, c *cli.Command) error {
 	}
 	roles, _, err := pipeline.Lookup(a.home, repo, name)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	if c.Bool("json") {
 		p, _, _ := pipeline.Read(a.home, repo)
@@ -172,7 +173,7 @@ func (a *app) pipelineSet(ctx context.Context, c *cli.Command) error {
 			b, err = io.ReadAll(c.Root().Reader)
 		}
 		if err != nil {
-			return cli.Exit("prf: reading roles: "+err.Error(), exitUsage)
+			return cli.Exit("prf: reading roles: "+err.Error(), job.ExitUsage)
 		}
 		text = string(b)
 	}
@@ -181,12 +182,12 @@ func (a *app) pipelineSet(ctx context.Context, c *cli.Command) error {
 		err = checkPipeline(a.home, repo, roles)
 	}
 	if err != nil {
-		return cli.Exit(fmt.Sprintf("prf: not saved: pipeline %s: %v", name, err), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: not saved: pipeline %s: %v", name, err), job.ExitUsage)
 	}
 
 	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	if !exists {
 		p = pipeline.File{Pipelines: map[string][]pipeline.Step{}} // don't persist the built-in default
@@ -196,7 +197,7 @@ func (a *app) pipelineSet(ctx context.Context, c *cli.Command) error {
 		p.Default = name
 	}
 	if err := pipeline.Write(a.home, repo, p); err != nil {
-		return cli.Exit("prf: "+err.Error(), exitSetup)
+		return cli.Exit("prf: "+err.Error(), job.ExitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "saved pipeline %s for %s: %s\n", name, repo, pipeline.Join(roles, " -> "))
 	return nil
@@ -209,18 +210,18 @@ func (a *app) pipelineRemove(ctx context.Context, c *cli.Command) error {
 	}
 	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	if _, ok := p.Pipelines[name]; !exists || !ok {
-		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), job.ExitUsage)
 	}
 	delete(p.Pipelines, name)
 	if p.Default == name {
 		p.Default = ""
-		logf("warning: %s was the default; run prf pipeline default to pick another", name)
+		a.logf("warning: %s was the default; run prf pipeline default to pick another", name)
 	}
 	if err := pipeline.Write(a.home, repo, p); err != nil {
-		return cli.Exit("prf: "+err.Error(), exitSetup)
+		return cli.Exit("prf: "+err.Error(), job.ExitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "removed pipeline %s for %s\n", name, repo)
 	return nil
@@ -233,14 +234,14 @@ func (a *app) pipelineDefault(ctx context.Context, c *cli.Command) error {
 	}
 	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	if _, ok := p.Pipelines[name]; !exists || !ok {
-		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), job.ExitUsage)
 	}
 	p.Default = name
 	if err := pipeline.Write(a.home, repo, p); err != nil {
-		return cli.Exit("prf: "+err.Error(), exitSetup)
+		return cli.Exit("prf: "+err.Error(), job.ExitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "default pipeline for %s is now %s\n", repo, name)
 	return nil
@@ -250,7 +251,7 @@ func (a *app) pipelineDefault(ctx context.Context, c *cli.Command) error {
 func repoArg(c *cli.Command) (string, error) {
 	repo := c.String("repo")
 	if !itemname.Valid(repo) {
-		return "", cli.Exit(fmt.Sprintf("prf: invalid repo name %q: use letters, digits, '-', '_' and '.'", repo), exitUsage)
+		return "", cli.Exit(fmt.Sprintf("prf: invalid repo name %q: use letters, digits, '-', '_' and '.'", repo), job.ExitUsage)
 	}
 	return repo, nil
 }

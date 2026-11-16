@@ -1,10 +1,7 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/sandbox"
 )
@@ -42,7 +40,7 @@ func withFakeSRT(t *testing.T) {
 func checkEnv(t *testing.T, gate, extra string) env {
 	t.Helper()
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	withFakeSRT(t)
 	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateCheck}.Fixer(), "COMMIT fix-check on {{.Branch}}\n{{.Review}}")
 	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "a"`+extra+`, "pipelines": {"a": ["implement", `+gate+`, "review"]}}`)
@@ -101,8 +99,8 @@ func TestCheckGate(t *testing.T) {
 func TestCheckGateRunsOutOfRounds(t *testing.T) {
 	e := checkEnv(t, `{"gate": "check", "run": "echo nope; exit 3", "max_rounds": 2}`, "")
 
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitCheck {
-		t.Fatalf("exit %d, want %d", code, exitCheck)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != job.ExitCheck {
+		t.Fatalf("exit %d, want %d", code, job.ExitCheck)
 	}
 	if calls := e.calls(t); len(calls) != 3 {
 		t.Fatalf("got %d claude calls, want implement and two fixes", len(calls))
@@ -121,8 +119,8 @@ func TestCheckGateRunsOutOfRounds(t *testing.T) {
 
 	// A resume runs the command again, with a fresh set of fixes.
 	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "a", "pipelines": {"a": ["implement"]}}`)
-	if code := e.run(t, "resume", "origin/b"); code != exitCheck {
-		t.Fatalf("resume: exit %d, want %d", code, exitCheck)
+	if code := e.run(t, "resume", "origin/b"); code != job.ExitCheck {
+		t.Fatalf("resume: exit %d, want %d", code, job.ExitCheck)
 	}
 	if calls := e.calls(t); len(calls) != 5 {
 		t.Fatalf("got %d claude calls after the resume, want two more fixes", len(calls))
@@ -161,8 +159,8 @@ func TestCheckGateTimeout(t *testing.T) {
 	e := checkEnv(t, `{"gate": "check", "run": "sleep 30 & wait", "timeout": "200ms", "max_rounds": 1}`, "")
 
 	start := time.Now()
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitCheck {
-		t.Fatalf("exit %d, want %d", code, exitCheck)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != job.ExitCheck {
+		t.Fatalf("exit %d, want %d", code, job.ExitCheck)
 	}
 	if took := time.Since(start); took > 10*time.Second {
 		t.Errorf("took %s: the command's children weren't stopped", took)
@@ -173,29 +171,6 @@ func TestCheckGateTimeout(t *testing.T) {
 	status := readFile(t, filepath.Join(e.root, "work", "origin", "b", "status"))
 	if !strings.Contains(status, "round=1 exit=124 stopped=timeout\n") {
 		t.Errorf("status:\n%s", status)
-	}
-}
-
-func TestRunCommandInterrupted(t *testing.T) {
-	j := &job{dir: t.TempDir(), sigs: make(chan os.Signal, 1)}
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		j.sigs <- os.Interrupt
-	}()
-	start := time.Now()
-	out, code, err := j.runCommand("echo started; sleep 30", 0, checkRun{})
-	if !errors.Is(err, errInterrupted) || code != 130 || out != "started\n" {
-		t.Errorf("got %q, %d, %v", out, code, err)
-	}
-	if took := time.Since(start); took > 10*time.Second {
-		t.Errorf("took %s", took)
-	}
-	if _, _, err := j.runCommand("exit 0", 0, checkRun{}); err != nil {
-		t.Errorf("a clean run: %v", err)
-	}
-	j.dir = filepath.Join(j.dir, "gone")
-	if _, _, err := j.runCommand("exit 0", 0, checkRun{}); err == nil {
-		t.Error("a command that can't start should fail")
 	}
 }
 
@@ -230,14 +205,14 @@ func TestCheckValidation(t *testing.T) {
 
 	e := checkEnv(t, `"review"`, "")
 	t.Run("pipeline set refuses a @check with nothing to run", func(t *testing.T) {
-		code, out := runPrfErr(t, "--home", e.home, "pipeline", "set", "--repo", "origin", "p", "--roles", "implement,@check")
-		if code != exitUsage || !strings.Contains(out, "@check has no command") {
+		code, out := e.runErr(t, "pipeline", "set", "--repo", "origin", "p", "--roles", "implement,@check")
+		if code != job.ExitUsage || !strings.Contains(out, "@check has no command") {
 			t.Errorf("exit %d: %s", code, out)
 		}
 	})
 	t.Run("a run with @check and nothing to run stops before cloning", func(t *testing.T) {
-		code, out := runPrfErr(t, "--home", e.home, "run", "--repo", e.origin, "--branch", "x", "--prompt", "x", "--role", "implement,@check")
-		if code != exitUsage || !strings.Contains(out, "@check has no command") {
+		code, out := e.runErr(t, "run", "--repo", e.origin, "--branch", "x", "--prompt", "x", "--role", "implement,@check")
+		if code != job.ExitUsage || !strings.Contains(out, "@check has no command") {
 			t.Errorf("exit %d: %s", code, out)
 		}
 		if _, err := os.Stat(filepath.Join(e.root, "work", "origin", "x")); err == nil {
@@ -246,25 +221,15 @@ func TestCheckValidation(t *testing.T) {
 	})
 }
 
-func TestWriteOutput(t *testing.T) {
-	var b strings.Builder
-	writeOutput(&b, "\n")
-	if !strings.Contains(b.String(), "printed nothing") {
-		t.Errorf("empty output: %q", b.String())
-	}
-}
-
-// runPrfErr runs the app in-process, returning its exit code and the
-// message it exits with.
-func runPrfErr(t *testing.T, args ...string) (int, string) {
-	t.Helper()
-	app := newApp()
-	app.Reader, app.Writer = strings.NewReader(""), io.Discard
-	err := app.Run(context.Background(), append([]string{"prf"}, args...))
-	if err == nil {
-		return 0, ""
-	}
-	return exitCode(t, err), err.Error()
+// srtSettings is the part of a check gate's srt settings file the tests read.
+type srtSettings struct {
+	Filesystem struct {
+		AllowWrite, DenyWrite, DenyRead []string
+	} `json:"filesystem"`
+	Network struct {
+		AllowedDomains []string `json:"allowedDomains"`
+		DeniedDomains  []string `json:"deniedDomains"`
+	} `json:"network"`
 }
 
 func TestCheckSandbox(t *testing.T) {
@@ -298,9 +263,9 @@ func TestCheckSandbox(t *testing.T) {
 	t.Run("without srt, the gate refuses rather than run unsandboxed", func(t *testing.T) {
 		t.Setenv("PATH", "/usr/bin:/bin")
 		removeFile(t, srtLog)
-		errOut := captureStderr(t)
-		if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitSetup {
-			t.Fatalf("exit %d, want %d", code, exitSetup)
+		errOut := e.captureStderr()
+		if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != job.ExitSetup {
+			t.Fatalf("exit %d, want %d", code, job.ExitSetup)
 		}
 		if !strings.Contains(errOut.String(), "srt isn't installed: npm install -g @anthropic-ai/sandbox-runtime") {
 			t.Errorf("stderr:\n%s", errOut)
@@ -335,70 +300,8 @@ func TestCheckSandbox(t *testing.T) {
 	t.Run("unreadable Claude settings stop the gate", func(t *testing.T) {
 		writeFileT(t, filepath.Join(e.home, "origin", sandbox.SettingsFile), `{oops`)
 		defer removeFile(t, filepath.Join(e.home, "origin", sandbox.SettingsFile))
-		if code := e.run(t, "run", "--repo", e.origin, "--branch", "e", "--prompt", "x"); code != exitSetup {
-			t.Fatalf("exit %d, want %d", code, exitSetup)
+		if code := e.run(t, "run", "--repo", e.origin, "--branch", "e", "--prompt", "x"); code != job.ExitSetup {
+			t.Fatalf("exit %d, want %d", code, job.ExitSetup)
 		}
 	})
-}
-
-func TestRenderFailure(t *testing.T) {
-	goOut := "ok  \tapp/a\t0.1s\n--- FAIL: TestAdd (0.00s)\n    add_test.go:7: got -1, want 5\nFAIL\nFAIL\tapp/b\t0.2s\n"
-	got := renderFailure("go test ./...", 1, false, 0, goOut, "/job/tmp/check-2-round-1.log")
-	for _, want := range []string{"`go test ./...` failed with exit code 1.", "The failures in its output:",
-		"--- FAIL: TestAdd", "add_test.go:7: got -1, want 5", "FAIL\tapp/b", "The full output is in /job/tmp/check-2-round-1.log."} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "ok  \tapp/a") {
-		t.Errorf("kept a passing package:\n%s", got)
-	}
-
-	got = renderFailure("make", 2, false, 0, "something broke\n", "")
-	if !strings.Contains(got, "Its output:") || !strings.Contains(got, "something broke") || strings.Contains(got, "full output") {
-		t.Errorf("unknown output:\n%s", got)
-	}
-	got = renderFailure("false", 1, false, 0, "", "")
-	if !strings.Contains(got, "It printed nothing.") {
-		t.Errorf("no output:\n%s", got)
-	}
-	got = renderFailure("go test ./...", 137, false, 0, goOut, "")
-	if !strings.Contains(got, "was killed by signal 9 (exit code 137)") {
-		t.Errorf("killed:\n%s", got)
-	}
-	// What the excerpt doesn't recognize, at the end, is shown too.
-	got = renderFailure("make check", 2, false, 0, goOut+"make: *** [check] Error 2\n", "")
-	if !strings.Contains(got, "The end of its output:") || !strings.Contains(got, "make: *** [check] Error 2") {
-		t.Errorf("unrecognized end:\n%s", got)
-	}
-	if strings.Contains(renderFailure("go test ./...", 1, false, 0, goOut, ""), "The end of its output:") {
-		t.Error("repeated the end when the excerpt already had it")
-	}
-	got = renderFailure("go test ./...", 124, true, time.Minute, goOut+"=== RUN TestSlow\n", "")
-	if !strings.Contains(got, "didn't finish within 1m0s") || !strings.Contains(got, "=== RUN TestSlow") {
-		t.Errorf("a timeout shows the end of the output:\n%s", got)
-	}
-}
-
-// The @check gate's srt sandbox may write where Claude's may.
-func TestCheckSandboxJobWriteDirs(t *testing.T) {
-	withFakeSRT(t)
-	dir := t.TempDir()
-	settings := filepath.Join(dir, sandbox.SettingsFile)
-	writeFileT(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": ["/shared/go-build"]}}}`)
-	j := job{jobDir: dir, dir: filepath.Join(dir, "repo"), tmp: filepath.Join(dir, "tmp"), settings: settings,
-		writeDirs: []string{filepath.Join(dir, "cache", "a"), filepath.Join(dir, "cache", "b")}}
-
-	path, err := j.checkSandbox("/check-tmp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var s srtSettings
-	if err := json.Unmarshal([]byte(readFile(t, path)), &s); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{j.dir, j.tmp, "/check-tmp", j.writeDirs[0], j.writeDirs[1], "/shared/go-build"}
-	if !slices.Equal(s.Filesystem.AllowWrite, want) {
-		t.Errorf("allowWrite = %v, want %v", s.Filesystem.AllowWrite, want)
-	}
 }

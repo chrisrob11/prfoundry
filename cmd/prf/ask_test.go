@@ -5,23 +5,24 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/review"
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // ownerSaw is what fakeOwner saw of a question: the page, its URL, and the
 // job's state.
 type ownerSaw struct {
-	reviewView
+	review.View
 	url   string
-	state jobState
+	state state.Job
 }
 
 // fakeOwner stands in for you at an ask gate. When the gate opens its page,
@@ -29,14 +30,12 @@ type ownerSaw struct {
 // waits for the page to show a question, reads it, README.md at HEAD, and
 // the job's state.json, and posts the answer. The gate doesn't open a page
 // that's still open, so a second question needs no second open.
-func fakeOwner(t *testing.T, answers ...string) *[]ownerSaw {
+func fakeOwner(t *testing.T, e env, answers ...string) *[]ownerSaw {
 	t.Helper()
 	var views []ownerSaw
 	opened := false
-	prevOpen, prevNotify := openBrowser, notify
-	t.Cleanup(func() { openBrowser, notify = prevOpen, prevNotify })
-	notify = func(string, string) {}
-	openBrowser = func(page string) error {
+	e.h.rt.Notify = func(string, string) {}
+	e.h.rt.OpenBrowser = func(page string) error {
 		if len(answers) == 0 || opened {
 			t.Errorf("question page opened again, or with no answers to give: %s", page)
 			return nil
@@ -93,20 +92,20 @@ func awaitQuestion(page string, version int) (ownerSaw, bool) {
 		if err != nil {
 			continue
 		}
-		saw.reviewView = reviewView{}
-		err = json.NewDecoder(res.Body).Decode(&saw.reviewView)
+		saw.View = review.View{}
+		err = json.NewDecoder(res.Body).Decode(&saw.View)
 		_ = res.Body.Close()
-		if err != nil || saw.State != pageWaiting || saw.Version <= version {
+		if err != nil || saw.State != review.PageWaiting || saw.Version <= version {
 			continue
 		}
-		if paths, _ := filepath.Glob(filepath.Join("work", "*", "*", stateFile)); len(paths) == 1 {
+		if paths, _ := filepath.Glob(filepath.Join("work", "*", "*", state.FileName)); len(paths) == 1 {
 			b, _ := os.ReadFile(paths[0])
-			saw.state = jobState{}
+			saw.state = state.Job{}
 			if err := json.Unmarshal(b, &saw.state); err != nil {
 				continue
 			}
 		}
-		if saw.state.State == stateAsk {
+		if saw.state.State == state.Ask {
 			return saw, true
 		}
 	}
@@ -126,7 +125,7 @@ const (
 // the test role.
 func askEnv(t *testing.T, count int, gate string) env {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	writeRole(t, e.roles, "asker", "ASK on {{.Branch}}")
 	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateAsk}.Fixer(), "ANSWER on {{.Branch}}\n{{.Question}}\n{{.Review}}")
 	asks := filepath.Join(e.root, "asks")
@@ -139,7 +138,7 @@ func askEnv(t *testing.T, count int, gate string) env {
 
 func TestAskGate(t *testing.T) {
 	e := askEnv(t, 1, `{"gate": "ask", "question": ".agent/stop.md", "model": "opus"}`)
-	views := fakeOwner(t, answer)
+	views := fakeOwner(t, e, answer)
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -151,7 +150,7 @@ func TestAskGate(t *testing.T) {
 		t.Errorf("view = %+v", v)
 	}
 	st := (*views)[0].state
-	if st.State != stateAsk || st.ReviewURL != (*views)[0].url || st.Step != 2 || stageOf(st) != "ask (waiting for owner)" || detailOf(st) != st.ReviewURL || !st.live() {
+	if st.State != state.Ask || st.ReviewURL != (*views)[0].url || st.Step != 2 || stageOf(st) != "ask (waiting for owner)" || detailOf(st) != st.ReviewURL || !st.Live() {
 		t.Errorf("state while waiting = %+v", st)
 	}
 
@@ -197,11 +196,11 @@ func TestAskGate(t *testing.T) {
 			t.Errorf("status missing %q:\n%s", want, status)
 		}
 	}
-	rounds, err := readRounds(filepath.Join(jobDir, "asks", "step-2"))
+	rounds, err := review.ReadRounds(filepath.Join(jobDir, "asks", "step-2"))
 	if err != nil || len(rounds) != 1 {
 		t.Fatalf("rounds = %+v, %v", rounds, err)
 	}
-	if r := rounds[0]; r.Verdict != verdictAnswer || !r.Fixed || !r.Rerun || !strings.Contains(r.Question, "Which way?") || len(r.Comments) != 2 || r.Comments[0].Block != 3 {
+	if r := rounds[0]; r.Verdict != review.Answer || !r.Fixed || !r.Rerun || !strings.Contains(r.Question, "Which way?") || len(r.Comments) != 2 || r.Comments[0].Block != 3 {
 		t.Errorf("round = %+v", r)
 	}
 }
@@ -209,7 +208,7 @@ func TestAskGate(t *testing.T) {
 func TestAskGateAcceptsRecommendations(t *testing.T) {
 	e := askEnv(t, 1, `"@ask"`)
 	t.Setenv("FAKE_ASK_PATH", "") // the default: $PRF_TMP/stop.md
-	views := fakeOwner(t, acceptAll)
+	views := fakeOwner(t, e, acceptAll)
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -218,7 +217,7 @@ func TestAskGateAcceptsRecommendations(t *testing.T) {
 	if len(calls) != 4 {
 		t.Fatalf("got %d claude calls, want asker, answer, asker, test", len(calls))
 	}
-	if fix := calls[1][1]; !strings.Contains(fix, acceptText) || !strings.Contains(fix, "Which way?") {
+	if fix := calls[1][1]; !strings.Contains(fix, review.AcceptText) || !strings.Contains(fix, "Which way?") {
 		t.Errorf("fix run's args:\n%s", fix)
 	}
 	// The question was in the job's own tmp folder, which every step can write to.
@@ -233,7 +232,7 @@ func TestAskGateAcceptsRecommendations(t *testing.T) {
 
 func TestAskGateWithoutAQuestion(t *testing.T) {
 	e := askEnv(t, 0, `"@ask"`)
-	views := fakeOwner(t)
+	views := fakeOwner(t, e)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -247,9 +246,9 @@ func TestAskGateWithoutAQuestion(t *testing.T) {
 
 func TestAskGateRunsOutOfRounds(t *testing.T) {
 	e := askEnv(t, 5, `{"gate": "ask", "question": ".agent/stop.md", "max_rounds": 1}`)
-	fakeOwner(t, answer)
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitAsk {
-		t.Fatalf("exit %d, want %d", code, exitAsk)
+	fakeOwner(t, e, answer)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != job.ExitAsk {
+		t.Fatalf("exit %d, want %d", code, job.ExitAsk)
 	}
 	if n := len(e.calls(t)); n != 3 {
 		t.Errorf("got %d claude calls, want asker, answer, asker", n)
@@ -262,9 +261,9 @@ func TestAskGateRunsOutOfRounds(t *testing.T) {
 
 func TestAskGateStopJob(t *testing.T) {
 	e := askEnv(t, 1, `{"gate": "ask", "question": ".agent/stop.md"}`)
-	before := fakeOwner(t, stopJob)
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitOwner {
-		t.Fatalf("exit %d, want %d", code, exitOwner)
+	before := fakeOwner(t, e, stopJob)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != job.ExitOwner {
+		t.Fatalf("exit %d, want %d", code, job.ExitOwner)
 	}
 	if n := len(e.calls(t)); n != 1 {
 		t.Errorf("got %d claude calls, want only the asker's", n)
@@ -273,13 +272,13 @@ func TestAskGateStopJob(t *testing.T) {
 	if status := readFile(t, filepath.Join(jobDir, "status")); !strings.Contains(status, "exit=8 rounds=1 stopped=owner") {
 		t.Errorf("status:\n%s", status)
 	}
-	if st := readState(t, jobDir); st.State != stateFailed || st.Step != 2 {
+	if st := readState(t, jobDir); st.State != state.Failed || st.Step != 2 {
 		t.Errorf("state = %+v", st)
 	}
 
 	// Resuming at the gate asks the same question again; once answered, it
 	// re-runs the asker, which it loads from the step before.
-	after := fakeOwner(t, answer)
+	after := fakeOwner(t, e, answer)
 	if code := e.run(t, "resume", "origin/b"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
 	}
@@ -294,81 +293,10 @@ func TestAskGateStopJob(t *testing.T) {
 	}
 }
 
-func TestAskSubmissions(t *testing.T) {
-	dir := t.TempDir()
-	srv, err := startReviewServer(dir, "app", "job", func() string { return "" })
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer srv.close()
-	srv.set(pageWaiting, reviewView{Kind: pipeline.GateAsk, Round: 1})
-	post := func(body string) int {
-		res, err := http.Post(srv.url+"api/submit", "application/json", strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = res.Body.Close()
-		return res.StatusCode
-	}
-	for _, bad := range []string{approve, `{"verdict": "answer", "body": " "}`} {
-		if code := post(bad); code != http.StatusBadRequest {
-			t.Errorf("post %s: %d, want 400", bad, code)
-		}
-	}
-	if code := post(acceptAll); code != http.StatusOK {
-		t.Errorf("accept: %d", code)
-	}
-	if res, err := http.Get(srv.url + "api/file?path=x"); err != nil {
-		t.Errorf("api/file without a checkout: %v", err)
-	} else {
-		_ = res.Body.Close()
-		if res.StatusCode != http.StatusNotFound {
-			t.Errorf("api/file without a checkout: %s", res.Status)
-		}
-	}
-}
-
-func TestAskSteps(t *testing.T) {
-	for _, tt := range []struct {
-		steps []pipeline.Step
-		want  string
-	}{
-		{[]pipeline.Step{{Gate: pipeline.GateAsk}}, "must follow a role"},
-		{[]pipeline.Step{{Role: "implement"}, {Gate: pipeline.GateReview}, {Gate: pipeline.GateAsk}}, "must follow a role"},
-	} {
-		if err := pipeline.CheckAskers(tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("CheckAskers(%+v) = %v", tt.steps, err)
-		}
-	}
-	if err := pipeline.CheckAskers([]pipeline.Step{{Role: "implement"}, {Gate: pipeline.GateAsk}}); err != nil {
-		t.Error(err)
-	}
-	if err := pipeline.CheckGate(pipeline.Step{Gate: pipeline.GateReview, Question: "q.md"}); err == nil || !strings.Contains(err.Error(), "only for the @ask gate") {
-		t.Errorf("question on @review: %v", err)
-	}
-	var s pipeline.Step
-	if err := json.Unmarshal([]byte(`{"gate": "ask", "question": "q.md"}`), &s); err != nil || s.Fixer() != "answer-question" {
-		t.Errorf("step = %+v, %v", s, err)
-	}
-	if b, _ := json.Marshal(s); string(b) != `{"gate":"ask","question":"q.md"}` {
-		t.Errorf("marshal = %s", b)
-	}
-	j := &job{dir: "/repo", env: []string{"PRF_TMP=/jobs/a/tmp", "TMPDIR=/repo/.tmp"}}
-	if got := j.questionPath(pipeline.DefaultQuestion); got != "/jobs/a/tmp/stop.md" {
-		t.Errorf("questionPath = %s", got)
-	}
-	if got := j.questionPath("$TMPDIR/stop.md"); got != "/repo/.tmp/stop.md" {
-		t.Errorf("questionPath = %s", got)
-	}
-	if got := j.questionPath(".agent/stop.md"); got != "/repo/.agent/stop.md" {
-		t.Errorf("questionPath = %s", got)
-	}
-}
-
 func TestAskGateTwice(t *testing.T) {
 	e := askEnv(t, 2, `"@ask"`)
 	t.Setenv("FAKE_ASK_PATH", "")
-	views := fakeOwner(t, answer, acceptAll)
+	views := fakeOwner(t, e, answer, acceptAll)
 
 	// The command line's @ask:model overrides the pipeline.
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "asker,@ask:sonnet"); code != 0 {
@@ -381,11 +309,11 @@ func TestAskGateTwice(t *testing.T) {
 	if len(calls) != 5 {
 		t.Fatalf("got %d claude calls, want asker, then answer and asker twice", len(calls))
 	}
-	if fix := calls[3][1]; !strings.Contains(fix, "Round 2: the owner answered") || !strings.Contains(fix, acceptText) || !strings.Contains(fix, "--model sonnet") {
+	if fix := calls[3][1]; !strings.Contains(fix, "Round 2: the owner answered") || !strings.Contains(fix, review.AcceptText) || !strings.Contains(fix, "--model sonnet") {
 		t.Errorf("second fix run's args:\n%s", fix)
 	}
 	last := calls[4][1]
-	for _, want := range []string{"### Question 1", "Go left.", "### Question 2", acceptText} {
+	for _, want := range []string{"### Question 1", "Go left.", "### Question 2", review.AcceptText} {
 		if !strings.Contains(last, want) {
 			t.Errorf("last re-run's args missing %q:\n%s", want, last)
 		}
@@ -399,7 +327,7 @@ func TestAskGateEmptyQuestion(t *testing.T) {
 	e := askEnv(t, 0, `{"gate": "ask", "question": "$ASK_DIR/q.md"}`)
 	t.Setenv("ASK_DIR", filepath.Join(e.root, "qdir"))
 	writeFileT(t, filepath.Join(e.root, "qdir", "q.md"), " \n\n")
-	views := fakeOwner(t)
+	views := fakeOwner(t, e)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -411,20 +339,20 @@ func TestAskGateEmptyQuestion(t *testing.T) {
 func TestAskGateFixRoleFails(t *testing.T) {
 	e := askEnv(t, 1, `{"gate": "ask", "question": ".agent/stop.md"}`)
 	t.Setenv("FAKE_FAIL_ON", "ANSWER on")
-	before := fakeOwner(t, answer)
+	before := fakeOwner(t, e, answer)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 1 {
 		t.Fatalf("exit %d, want the fix role's 1", code)
 	}
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
-	rounds, _ := readRounds(filepath.Join(jobDir, "asks", "step-2"))
-	if len(rounds) != 1 || rounds[0].Fixed || rounds[0].Verdict != verdictAnswer {
+	rounds, _ := review.ReadRounds(filepath.Join(jobDir, "asks", "step-2"))
+	if len(rounds) != 1 || rounds[0].Fixed || rounds[0].Verdict != review.Answer {
 		t.Fatalf("rounds = %+v", rounds)
 	}
 
 	// Resuming records the saved answers without asking again, then re-runs
 	// the asker.
 	t.Setenv("FAKE_FAIL_ON", "")
-	after := fakeOwner(t)
+	after := fakeOwner(t, e)
 	if code := e.run(t, "resume", "origin/b"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
 	}
@@ -438,7 +366,7 @@ func TestAskGateFixRoleFails(t *testing.T) {
 	if fix := calls[2][1]; !strings.Contains(fix, "Go left.") {
 		t.Errorf("resumed fix run's args:\n%s", fix)
 	}
-	if rounds, _ := readRounds(filepath.Join(jobDir, "asks", "step-2")); len(rounds) != 1 || !rounds[0].Fixed || !rounds[0].Rerun {
+	if rounds, _ := review.ReadRounds(filepath.Join(jobDir, "asks", "step-2")); len(rounds) != 1 || !rounds[0].Fixed || !rounds[0].Rerun {
 		t.Errorf("rounds after resume = %+v", rounds)
 	}
 }
@@ -446,12 +374,12 @@ func TestAskGateFixRoleFails(t *testing.T) {
 func TestAskGateRerunFails(t *testing.T) {
 	e := askEnv(t, 1, `{"gate": "ask", "question": ".agent/stop.md"}`)
 	t.Setenv("FAKE_FAIL_ON", "## Your questions, answered")
-	fakeOwner(t, answer)
+	fakeOwner(t, e, answer)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 1 {
 		t.Fatalf("exit %d, want the re-run's 1", code)
 	}
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
-	if rounds, _ := readRounds(filepath.Join(jobDir, "asks", "step-2")); len(rounds) != 1 || !rounds[0].Fixed || rounds[0].Rerun {
+	if rounds, _ := review.ReadRounds(filepath.Join(jobDir, "asks", "step-2")); len(rounds) != 1 || !rounds[0].Fixed || rounds[0].Rerun {
 		t.Errorf("rounds = %+v", rounds)
 	}
 	status := readFile(t, filepath.Join(jobDir, "status"))
@@ -464,127 +392,23 @@ func TestAskGateRerunFails(t *testing.T) {
 
 func TestAskPipelineValidation(t *testing.T) {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	for _, roles := range []string{"@ask,implement", "implement,@review,@ask"} {
-		if code := e.run(t, "pipeline", "set", "p", "--repo", "origin", "--roles", roles); code != exitUsage {
-			t.Errorf("pipeline set %s: exit %d, want %d", roles, code, exitUsage)
+		if code := e.run(t, "pipeline", "set", "p", "--repo", "origin", "--roles", roles); code != job.ExitUsage {
+			t.Errorf("pipeline set %s: exit %d, want %d", roles, code, job.ExitUsage)
 		}
 	}
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "@ask"); code != exitUsage {
-		t.Errorf("run --role @ask: exit %d, want %d", code, exitUsage)
-	}
-}
-
-func TestFileAtHead(t *testing.T) {
-	j := &job{dir: newOrigin(t)}
-	if text, ok := j.fileAtHead("README.md"); !ok || !strings.HasPrefix(text, "# origin") {
-		t.Errorf("README.md = %q, %t", text, ok)
-	}
-	for _, path := range []string{"missing.go", "../outside", "/etc/passwd", "a/../../x"} {
-		if _, ok := j.fileAtHead(path); ok {
-			t.Errorf("fileAtHead(%q) found a file", path)
-		}
-	}
-
-	srv, err := startReviewServer(t.TempDir(), "app", "job", func() string { return "" })
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer srv.close()
-	srv.fileAt = j.fileAtHead
-	get := func(path string) (int, map[string]string) {
-		res, err := http.Get(srv.url + "api/file?path=" + url.QueryEscape(path))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = res.Body.Close() }()
-		var out map[string]string
-		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-			t.Fatal(err)
-		}
-		return res.StatusCode, out
-	}
-	if code, out := get("README.md"); code != http.StatusOK || out["path"] != "README.md" || !strings.HasPrefix(out["text"], "# origin") {
-		t.Errorf("api/file README.md: %d %v", code, out)
-	}
-	if code, _ := get("../x"); code != http.StatusNotFound {
-		t.Errorf("api/file ../x: %d", code)
-	}
-}
-
-func TestRenderAnswers(t *testing.T) {
-	r := reviewRound{Round: 3, Verdict: verdictAccept, Body: "Also: hurry.", Comments: []reviewComment{
-		{ID: 1, Block: 2, Code: "line one\nline two", Body: "This."},
-		{ID: 2, Path: "a.go", Body: "Whole file."},
-		{ID: 3, Path: "a.go", Line: 4, Side: "old", Code: "-gone", Body: "Why?"},
-	}}
-	got := renderAnswers(r, "q.md")
-	for _, want := range []string{
-		"Round 3: the owner answered the question in `q.md`.\n\n" + acceptText + "\n\nAlso: hurry.\n",
-		"### #1: on the question\n\n> line one\n> line two\n\nThis.\n",
-		"### #2: `a.go`\n\nWhole file.\n",
-		"### #3: `a.go` line 4 (a removed line)\n\n```diff\n-gone\n```\n\nWhy?\n",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("renderAnswers missing %q:\n%s", want, got)
-		}
-	}
-	if renderAnswered([]reviewRound{{Round: 1, Question: "Q?"}}) != "" {
-		t.Error("renderAnswered included a round its fix role hadn't recorded")
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "@ask"); code != job.ExitUsage {
+		t.Errorf("run --role @ask: exit %d, want %d", code, job.ExitUsage)
 	}
 }
 
 func TestAskStatus(t *testing.T) {
-	s := jobState{State: stateAsk, Stage: "@ask", Step: 2, Models: []string{"", "opus"}, ReviewURL: "http://127.0.0.1:1/x/"}
+	s := state.Job{State: state.Ask, Stage: "@ask", Step: 2, Models: []string{"", "opus"}, ReviewURL: "http://127.0.0.1:1/x/"}
 	if got := stageOf(s); got != "ask (waiting for owner)" {
 		t.Errorf("stageOf = %q", got)
 	}
 	if got := detailOf(s); got != s.ReviewURL {
 		t.Errorf("detailOf = %q", got)
-	}
-}
-
-// TestQuestionMarkdown runs the review page's question parser and file:line
-// matcher in node, when it's installed.
-func TestQuestionMarkdown(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node isn't installed")
-	}
-	page := string(reviewPage)
-	start, end := strings.Index(page, "function mdBlocks"), strings.Index(page, "function withRefs")
-	if start < 0 || end < start {
-		t.Fatal("review.html no longer has mdBlocks and refPattern before withRefs")
-	}
-	script := page[start:end] + `
-const q = "# Stop: CS1a\n\nThe brief says X but\nscripts/wave/launch-pr.sh:42 does Y.\n\n## Options\n\n" +
-  "- (a) keep it (Recommended)\n  more on a\n- (b) drop it, see ` + "`config.go:12-20`" + `\n1. one\n\n> quoted\n\n" +
-  "` + "```" + `go\nfunc x() {}\n` + "```" + `\n\n---\nhttp://example.com:80 and README.md:3";
-console.log(JSON.stringify({
-  blocks: mdBlocks(q).map(b => b.t + ":" + b.text),
-  refs: [...q.matchAll(refPattern)].map(m => m[1] + "@" + m[2]),
-}));
-`
-	path := filepath.Join(t.TempDir(), "md.js")
-	writeFileT(t, path, script)
-	out, err := exec.Command(node, path).CombinedOutput()
-	if err != nil {
-		t.Fatalf("node: %v\n%s", err, out)
-	}
-	var got struct{ Blocks, Refs []string }
-	if err := json.Unmarshal(out, &got); err != nil {
-		t.Fatalf("%v: %s", err, out)
-	}
-	wantBlocks := []string{
-		"h:Stop: CS1a", "p:The brief says X but\nscripts/wave/launch-pr.sh:42 does Y.", "h:Options",
-		"li:(a) keep it (Recommended)\nmore on a", "li:(b) drop it, see `config.go:12-20`", "li:one",
-		"quote:quoted", "code:func x() {}", "p:http://example.com:80 and README.md:3",
-	}
-	if !slices.Equal(got.Blocks, wantBlocks) {
-		t.Errorf("blocks = %q\nwant %q", got.Blocks, wantBlocks)
-	}
-	// example.com:80 matches here; withRefs skips it as part of a URL.
-	if want := []string{"scripts/wave/launch-pr.sh@42", "config.go@12", "example.com@80", "README.md@3"}; !slices.Equal(got.Refs, want) {
-		t.Errorf("refs = %q, want %q", got.Refs, want)
 	}
 }

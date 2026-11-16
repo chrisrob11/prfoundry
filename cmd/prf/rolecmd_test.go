@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
@@ -84,8 +85,8 @@ func TestRoleShow(t *testing.T) {
 		t.Errorf("show --json = %d %s", code, out)
 	}
 	for _, args := range [][]string{{"perf"}, {}, {"a", "b"}, {"../x"}, {"test", "--repo", "../x"}} {
-		if code, _ := prf(t, h, "", append([]string{"role", "show"}, args...)...); code != exitUsage {
-			t.Errorf("show %v: exit %d, want %d", args, code, exitUsage)
+		if code, _ := prf(t, h, "", append([]string{"role", "show"}, args...)...); code != job.ExitUsage {
+			t.Errorf("show %v: exit %d, want %d", args, code, job.ExitUsage)
 		}
 	}
 }
@@ -125,8 +126,8 @@ func TestRoleSet(t *testing.T) {
 	} {
 		t.Run("rejects "+tt.name, func(t *testing.T) {
 			before := read(filepath.Join(h, "roles", "review.md"))
-			if code, _ := prf(t, h, tt.stdin, "role", "set", tt.role); code != exitUsage {
-				t.Errorf("exit %d, want %d", code, exitUsage)
+			if code, _ := prf(t, h, tt.stdin, "role", "set", tt.role); code != job.ExitUsage {
+				t.Errorf("exit %d, want %d", code, job.ExitUsage)
 			}
 			if read(filepath.Join(h, "roles", "review.md")) != before {
 				t.Error("rejected role still changed the file")
@@ -147,7 +148,7 @@ func TestRoleRemoveAndReset(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "now resolves to "+filepath.Join(h, "roles", "review.md")) {
 		t.Fatalf("remove = %d %q", code, out)
 	}
-	if code, _ := prf(t, h, "", "role", "remove", "review", "--repo", "app"); code != exitUsage {
+	if code, _ := prf(t, h, "", "role", "remove", "review", "--repo", "app"); code != job.ExitUsage {
 		t.Errorf("removing a missing role: exit %d", code)
 	}
 
@@ -158,7 +159,7 @@ func TestRoleRemoveAndReset(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(h, "roles", "review.md")); string(b) != string(builtin) {
 		t.Error("reset did not restore the built-in text")
 	}
-	if code, _ := prf(t, h, "", "role", "reset", "perf"); code != exitUsage {
+	if code, _ := prf(t, h, "", "role", "reset", "perf"); code != job.ExitUsage {
 		t.Errorf("reset of a non-built-in: exit %d", code)
 	}
 }
