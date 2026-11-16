@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // A step stopped by the usage limit pauses the job, then runs again and
@@ -23,10 +25,10 @@ func TestALimitPausesTheJobAndRerunsTheStep(t *testing.T) {
 	captureStderr(t)
 
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
-	seen := make(chan jobState, 1)
+	seen := make(chan state.Job, 1)
 	go func() {
 		for range 100 {
-			b, err := os.ReadFile(filepath.Join(jobDir, stateFile))
+			b, err := os.ReadFile(filepath.Join(jobDir, state.FileName))
 			if err == nil && strings.Contains(string(b), `"state": "paused"`) {
 				seen <- readState(t, jobDir)
 				return
@@ -49,10 +51,10 @@ func TestALimitPausesTheJobAndRerunsTheStep(t *testing.T) {
 	if !ok {
 		t.Fatal("state.json never said paused")
 	}
-	if st.Step != 2 || st.ResumeAt.IsZero() || !st.live() || !strings.Contains(detailOf(st), "usage limit") {
+	if st.Step != 2 || st.ResumeAt.IsZero() || !st.Live() || !strings.Contains(detailOf(st), "usage limit") {
 		t.Errorf("paused state = %+v, detail %q", st, detailOf(st))
 	}
-	if after := readState(t, jobDir); after.State != stateDone || !after.ResumeAt.IsZero() {
+	if after := readState(t, jobDir); after.State != state.Done || !after.ResumeAt.IsZero() {
 		t.Errorf("after: state %s, resume_at %v", after.State, after.ResumeAt)
 	}
 	b, _ := os.ReadFile(filepath.Join(jobDir, "status"))

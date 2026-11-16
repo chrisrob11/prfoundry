@@ -16,6 +16,7 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/sandbox"
+	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/urfave/cli/v3"
 )
 
@@ -230,12 +231,12 @@ func TestRunCloneExists(t *testing.T) {
 	}
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
 	before, _ := os.ReadFile(filepath.Join(jobDir, "status"))
-	beforeState, _ := os.ReadFile(filepath.Join(jobDir, stateFile))
+	beforeState, _ := os.ReadFile(filepath.Join(jobDir, state.FileName))
 	if code := e.run(t, args...); code != exitSetup {
 		t.Fatalf("second run: exit %d, want %d", code, exitSetup)
 	}
 	after, _ := os.ReadFile(filepath.Join(jobDir, "status"))
-	afterState, _ := os.ReadFile(filepath.Join(jobDir, stateFile))
+	afterState, _ := os.ReadFile(filepath.Join(jobDir, state.FileName))
 	if string(after) != string(before) || string(afterState) != string(beforeState) {
 		t.Error("refusing to rerun should leave the earlier job's status and state alone")
 	}

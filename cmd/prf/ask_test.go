@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // ownerSaw is what fakeOwner saw of a question: the page, its URL, and the
@@ -21,7 +22,7 @@ import (
 type ownerSaw struct {
 	reviewView
 	url   string
-	state jobState
+	state state.Job
 }
 
 // fakeOwner stands in for you at an ask gate. When the gate opens its page,
@@ -99,14 +100,14 @@ func awaitQuestion(page string, version int) (ownerSaw, bool) {
 		if err != nil || saw.State != pageWaiting || saw.Version <= version {
 			continue
 		}
-		if paths, _ := filepath.Glob(filepath.Join("work", "*", "*", stateFile)); len(paths) == 1 {
+		if paths, _ := filepath.Glob(filepath.Join("work", "*", "*", state.FileName)); len(paths) == 1 {
 			b, _ := os.ReadFile(paths[0])
-			saw.state = jobState{}
+			saw.state = state.Job{}
 			if err := json.Unmarshal(b, &saw.state); err != nil {
 				continue
 			}
 		}
-		if saw.state.State == stateAsk {
+		if saw.state.State == state.Ask {
 			return saw, true
 		}
 	}
@@ -151,7 +152,7 @@ func TestAskGate(t *testing.T) {
 		t.Errorf("view = %+v", v)
 	}
 	st := (*views)[0].state
-	if st.State != stateAsk || st.ReviewURL != (*views)[0].url || st.Step != 2 || stageOf(st) != "ask (waiting for owner)" || detailOf(st) != st.ReviewURL || !st.live() {
+	if st.State != state.Ask || st.ReviewURL != (*views)[0].url || st.Step != 2 || stageOf(st) != "ask (waiting for owner)" || detailOf(st) != st.ReviewURL || !st.Live() {
 		t.Errorf("state while waiting = %+v", st)
 	}
 
@@ -273,7 +274,7 @@ func TestAskGateStopJob(t *testing.T) {
 	if status := readFile(t, filepath.Join(jobDir, "status")); !strings.Contains(status, "exit=8 rounds=1 stopped=owner") {
 		t.Errorf("status:\n%s", status)
 	}
-	if st := readState(t, jobDir); st.State != stateFailed || st.Step != 2 {
+	if st := readState(t, jobDir); st.State != state.Failed || st.Step != 2 {
 		t.Errorf("state = %+v", st)
 	}
 
@@ -535,7 +536,7 @@ func TestRenderAnswers(t *testing.T) {
 }
 
 func TestAskStatus(t *testing.T) {
-	s := jobState{State: stateAsk, Stage: "@ask", Step: 2, Models: []string{"", "opus"}, ReviewURL: "http://127.0.0.1:1/x/"}
+	s := state.Job{State: state.Ask, Stage: "@ask", Step: 2, Models: []string{"", "opus"}, ReviewURL: "http://127.0.0.1:1/x/"}
 	if got := stageOf(s); got != "ask (waiting for owner)" {
 		t.Errorf("stageOf = %q", got)
 	}

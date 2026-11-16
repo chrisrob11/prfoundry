@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // limitMargin is how long past the stated reset a paused step waits, so it
@@ -19,12 +21,12 @@ func (j *job) pauseUntil(step, name string, reset time.Time) bool {
 	at := time.Now().Add(wait)
 	j.event("PRF_PAUSE branch=%s phase=%s step=%s until=%s", j.branch, name, step, at.Format(time.RFC3339))
 	logf("[%s] %s: hit the usage limit; paused until %s, then this step runs again", step, name, at.Format("Jan 2 3:04pm"))
-	j.setState(func(s *jobState) { s.State, s.ResumeAt, s.Activity = statePaused, at, "" })
+	j.setState(func(s *state.Job) { s.State, s.ResumeAt, s.Activity = state.Paused, at, "" })
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case <-timer.C:
-		j.setState(func(s *jobState) { s.ResumeAt = time.Time{} })
+		j.setState(func(s *state.Job) { s.ResumeAt = time.Time{} })
 		return true
 	case sig := <-j.sigs:
 		logf("[%s] %s: stopped while paused (%v)", step, name, sig)
@@ -33,6 +35,6 @@ func (j *job) pauseUntil(step, name string, reset time.Time) bool {
 }
 
 // pausedDetail is a paused job's status detail.
-func pausedDetail(s jobState) string {
+func pausedDetail(s state.Job) string {
 	return fmt.Sprintf("usage limit; step re-runs at %s", s.ResumeAt.Local().Format("Jan 2 3:04pm"))
 }

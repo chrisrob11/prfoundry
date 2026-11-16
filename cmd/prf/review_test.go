@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // fakeReviewer stands in for you at a review gate: each time the gate opens
@@ -109,7 +110,7 @@ func TestReviewGate(t *testing.T) {
 		t.Errorf("round-1.md = %q", md)
 	}
 	st := readState(t, jobDir)
-	if st.State != stateDone || st.ReviewURL != "" || st.BaseCommit == "" || len(st.Steps) != 2 || st.Steps[1].Gate != pipeline.GateReview {
+	if st.State != state.Done || st.ReviewURL != "" || st.BaseCommit == "" || len(st.Steps) != 2 || st.Steps[1].Gate != pipeline.GateReview {
 		t.Errorf("state = %+v", st)
 	}
 }

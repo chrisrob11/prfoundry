@@ -10,6 +10,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/human"
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // prNone is --pr-create's third value, beside config.PRDraft and config.PRReady: open no PR.
@@ -23,7 +24,7 @@ func (j *job) ship() int {
 	if !j.push {
 		return 0
 	}
-	j.setState(func(s *jobState) { s.Stage, s.Activity = "pushing", "" })
+	j.setState(func(s *state.Job) { s.Stage, s.Activity = "pushing", "" })
 	logf("pushing %s", j.branch)
 	out, err := run(j.dir, "git", "push", "-u", "origin", j.branch)
 	j.event("PRF_PUSH branch=%s exit=%d", j.branch, exitCodeOf(err))
@@ -31,12 +32,12 @@ func (j *job) ship() int {
 		logf("push failed, so no PR either: %s", human.OneLine(out, 300))
 		return exitShip
 	}
-	j.setState(func(s *jobState) { s.Pushed = true })
+	j.setState(func(s *state.Job) { s.Pushed = true })
 	if j.prCreate == "" {
 		return 0
 	}
 
-	j.setState(func(s *jobState) { s.Stage = "opening PR" })
+	j.setState(func(s *state.Job) { s.Stage = "opening PR" })
 	url, err := j.openPR()
 	if err != nil {
 		logf("pushed, but no PR: %v", err)
@@ -44,7 +45,7 @@ func (j *job) ship() int {
 		return exitShip
 	}
 	j.event("PRF_PR branch=%s url=%s", j.branch, url)
-	j.setState(func(s *jobState) { s.PRURL = url })
+	j.setState(func(s *state.Job) { s.PRURL = url })
 	logf("PR: %s", url)
 	return 0
 }

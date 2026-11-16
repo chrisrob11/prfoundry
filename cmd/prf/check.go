@@ -20,6 +20,7 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/chrisrob11/prfoundry/internal/sandbox"
+	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
@@ -85,8 +86,8 @@ func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
 	}
 	for {
 		round++
-		j.setState(func(s *jobState) {
-			s.State, s.Stage, s.Activity, s.ReviewURL = stateRunning, p.name, fmt.Sprintf("round %d: %s", round, human.OneLine(command, 80)), ""
+		j.setState(func(s *state.Job) {
+			s.State, s.Stage, s.Activity, s.ReviewURL = state.Running, p.name, fmt.Sprintf("round %d: %s", round, human.OneLine(command, 80)), ""
 		})
 		logf("[%s] %s: round %d: running %s", step, p.name, round, command)
 		start := time.Now()

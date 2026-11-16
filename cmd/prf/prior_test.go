@@ -7,6 +7,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/claude"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // A step that runs again in the same job is told where its last run ended,
@@ -79,7 +80,7 @@ func TestRecordRun(t *testing.T) {
 	}
 
 	logs := captureStderr(t)
-	j.tmp = filepath.Join(j.jobDir, stateFile) // a file, so reports/ can't be made
+	j.tmp = filepath.Join(j.jobDir, state.FileName) // a file, so reports/ can't be made
 	j.lastResult = claude.Result{Text: "did it"}
 	j.recordRun(1)
 	if !strings.Contains(logs.String(), "saving step 1's report: ") {

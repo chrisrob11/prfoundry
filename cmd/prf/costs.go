@@ -1,16 +1,15 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"fmt"
-	"slices"
 	"text/tabwriter"
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/human"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
+	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/urfave/cli/v3"
 )
 
@@ -28,15 +27,15 @@ func (a *app) costsCmd() *cli.Command {
 			&cli.BoolFlag{Name: "json", Usage: "print JSON"},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
-			states, err := readJobStates(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
+			states, err := state.List(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 			if err != nil {
 				return cli.Exit("prf: "+err.Error(), exitUsage)
 			}
-			rows, total, unrecorded := sumSpend(states, c.Duration("since"), time.Now())
+			rows, total, unrecorded := state.Sum(states, c.Duration("since"), time.Now())
 			w := c.Root().Writer
 			if c.Bool("json") {
 				if rows == nil {
-					rows = []roleSpend{}
+					rows = []state.Spend{}
 				}
 				return jsonio.Write(w, rows)
 			}
@@ -67,37 +66,8 @@ func (a *app) costsCmd() *cli.Command {
 	}
 }
 
-// sumSpend adds up the spend of the jobs active within since of now (every
-// job when since is 0), by role and model, most expensive first. total is
-// every counted job's cost; unrecorded is the part in jobs with no spend.
-func sumSpend(states []jobState, since time.Duration, now time.Time) (rows []roleSpend, total, unrecorded float64) {
-	for _, s := range states {
-		if since > 0 && s.Updated.Before(now.Add(-since)) {
-			continue
-		}
-		total += s.Cost
-		if len(s.Spend) == 0 {
-			unrecorded += s.Cost
-			continue
-		}
-		for _, r := range s.Spend {
-			i := slices.IndexFunc(rows, func(x roleSpend) bool { return x.Role == r.Role && x.Model == r.Model })
-			if i < 0 {
-				rows = append(rows, roleSpend{Role: r.Role, Model: r.Model})
-				i = len(rows) - 1
-			}
-			rows[i].Runs += r.Runs
-			rows[i].Turns += r.Turns
-			rows[i].Cost += r.Cost
-			rows[i].CacheRead += r.CacheRead
-		}
-	}
-	slices.SortStableFunc(rows, func(a, b roleSpend) int { return cmp.Compare(b.Cost, a.Cost) })
-	return rows, total, unrecorded
-}
-
 // perTurn is the context re-read per turn, in thousands of tokens.
-func perTurn(r roleSpend) string {
+func perTurn(r state.Spend) string {
 	if r.Turns == 0 || r.CacheRead == 0 {
 		return "-"
 	}

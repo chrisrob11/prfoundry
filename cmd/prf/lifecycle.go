@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,31 +13,9 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/mise"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/urfave/cli/v3"
 )
-
-// findJob returns the state of the job named by target: <repo>/<job> under
-// workdir, or a job folder's path.
-func findJob(workdir, target string) (jobState, error) {
-	jobDir := target
-	if _, err := os.Stat(filepath.Join(jobDir, stateFile)); err != nil {
-		jobDir = filepath.Join(workdir, target)
-	}
-	var s jobState
-	b, err := os.ReadFile(filepath.Join(jobDir, stateFile))
-	if err != nil {
-		return s, fmt.Errorf("no job %q: give <repo>/<job> as prf status shows it, or a job folder", target)
-	}
-	if err := json.Unmarshal(b, &s); err != nil {
-		return s, fmt.Errorf("%s: %w", filepath.Join(jobDir, stateFile), err)
-	}
-	// A job folder found from the working directory is made absolute: steps
-	// run in its repo folder, where a relative path names something else.
-	if s.JobDir, err = filepath.Abs(jobDir); err != nil {
-		return s, err
-	}
-	return s, nil
-}
 
 func (a *app) resumeCmd() *cli.Command {
 	return &cli.Command{
@@ -74,18 +51,18 @@ func (a *app) resume(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
-	st, err := findJob(workdir, c.Args().First())
+	st, err := state.Find(workdir, c.Args().First())
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
-	if st.live() && processAlive(st.PID) {
+	if st.Live() && state.ProcessAlive(st.PID) {
 		return cli.Exit(fmt.Sprintf("prf: %s/%s is still running (process %d)", st.Repo, st.Job, st.PID), exitUsage)
 	}
 
 	from := c.Int("from")
 	if from == 0 {
 		switch {
-		case st.State == stateDone:
+		case st.State == state.Done:
 			return cli.Exit("prf: that job finished; use --from <step> to run steps again", exitUsage)
 		case st.Step == 0:
 			return cli.Exit("prf: that job stopped during setup, before any step; start a new run", exitUsage)
@@ -178,7 +155,7 @@ func (a *app) cleanCmd() *cli.Command {
 }
 
 func (a *app) clean(ctx context.Context, c *cli.Command) error {
-	states, err := readJobStates(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
+	states, err := state.List(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
@@ -187,8 +164,8 @@ func (a *app) clean(ctx context.Context, c *cli.Command) error {
 	var freed int64
 	for _, s := range states {
 		switch s.State {
-		case stateDone:
-		case stateFailed, stateDied:
+		case state.Done:
+		case state.Failed, state.Died:
 			if !c.Bool("failed") {
 				continue
 			}
@@ -226,7 +203,7 @@ func (a *app) clean(ctx context.Context, c *cli.Command) error {
 // unsafeToRemove says why removing a job would lose work, or "" if it
 // wouldn't: its own clone has uncommitted changes or commits on no remote.
 // A job that worked in your own checkout (apply) only loses its logs.
-func unsafeToRemove(s jobState) string {
+func unsafeToRemove(s state.Job) string {
 	if s.Dir != filepath.Join(s.JobDir, "repo") {
 		return ""
 	}

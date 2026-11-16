@@ -13,6 +13,7 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
@@ -124,8 +125,8 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 
 		view := j.askView(p, path, question, rounds, len(rounds)+1)
 		srv.set(pageWaiting, view)
-		j.setState(func(s *jobState) {
-			s.State, s.Stage, s.Activity, s.ReviewURL = stateAsk, p.name, fmt.Sprintf("question %d", view.Round), srv.url
+		j.setState(func(s *state.Job) {
+			s.State, s.Stage, s.Activity, s.ReviewURL = state.Ask, p.name, fmt.Sprintf("question %d", view.Round), srv.url
 		})
 		j.event("PRF_ASK branch=%s phase=%s step=%s round=%d url=%s", j.branch, p.name, step, view.Round, srv.url)
 		logf("[%s] %s: %s has a question: waiting for your answers at %s", step, p.name, p.asker.name, srv.url)
@@ -148,7 +149,7 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 		if err := writeRound(dir, r); err != nil {
 			logf("saving the answers: %v", err)
 		}
-		j.setState(func(s *jobState) { s.State, s.Activity, s.ReviewURL = stateRunning, "", "" })
+		j.setState(func(s *state.Job) { s.State, s.Activity, s.ReviewURL = state.Running, "", "" })
 		j.event("PRF_ANSWERED branch=%s phase=%s step=%s round=%d verdict=%s comments=%d", j.branch, p.name, step, r.Round, r.Verdict, len(r.Comments))
 		if r.Verdict == verdictStop {
 			page(pageStopped)

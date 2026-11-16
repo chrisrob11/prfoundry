@@ -21,6 +21,7 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
 	"github.com/urfave/cli/v3"
 )
@@ -38,10 +39,10 @@ func (j *job) event(format string, args ...any) {
 // finish records the completion line and exits with code.
 func (j *job) finish(last string, code int) error {
 	j.event("PRF_DONE branch=%s phase=%s exit=%d dir=%s", j.branch, last, code, j.dir)
-	j.setState(func(s *jobState) {
-		s.State, s.Exit, s.Activity = stateDone, &code, ""
+	j.setState(func(s *state.Job) {
+		s.State, s.Exit, s.Activity = state.Done, &code, ""
 		if code != 0 {
-			s.State = stateFailed
+			s.State = state.Failed
 		}
 	})
 	return cli.Exit("", code)
@@ -105,7 +106,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 	if j.state.BaseCommit == "" {
 		base = j.baseCommit() // before any step commits, for the review gate's diff
 	}
-	j.setState(func(s *jobState) {
+	j.setState(func(s *state.Job) {
 		s.Pipeline, s.PR, s.Task, s.Push, s.PRCreate = pipelineName, j.pr, j.task, j.push, j.prCreate
 		if j.firstStep == 0 {
 			s.Roles, s.Models, s.Steps = names, models, j.roles
@@ -121,7 +122,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 	j.cost = j.priorCost
 	for i, p := range phases {
 		step, model := fmt.Sprintf("%d/%d", j.firstStep+i+1, total), models[i]
-		j.setState(func(s *jobState) { s.Step = j.firstStep + i + 1 })
+		j.setState(func(s *state.Job) { s.Step = j.firstStep + i + 1 })
 		var code int
 		switch p.gate {
 		case pipeline.GateReview:
@@ -232,7 +233,7 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	}
 	pipelineName := j.pipeline
 	j.event("PRF_START branch=%s phase=%s step=%s pipeline=%s%s", j.branch, name, step, pipelineName, modelField)
-	j.setState(func(s *jobState) { s.State, s.Stage, s.Activity, s.ReviewURL = stateRunning, name, "", "" })
+	j.setState(func(s *state.Job) { s.State, s.Stage, s.Activity, s.ReviewURL = state.Running, name, "", "" })
 	logf("[%s] %s: started", step, label)
 	_, _ = fmt.Fprintf(j.feed, "=== prf phase %s (step %s, pipeline %s%s) ===\n", name, step, pipelineName, strings.ReplaceAll(modelField, "=", " "))
 	phaseStart, prog := time.Now(), &claude.Progress{}
@@ -248,7 +249,7 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	go func() {
 		defer close(heartbeatDone)
 		heartbeat(heartbeatEvery, step, label, phaseStart, prog, stopHeartbeat, func(last string) {
-			j.setState(func(s *jobState) { s.Activity = last })
+			j.setState(func(s *state.Job) { s.Activity = last })
 		})
 	}()
 	res := claude.Follow(stream, j.raw, j.feed, prog, j.dir)
@@ -283,10 +284,10 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	}
 	j.lastResult = res
 	j.cost += res.Cost
-	j.setState(func(s *jobState) {
+	j.setState(func(s *state.Job) {
 		s.Cost = j.cost
 		if res.Got {
-			s.addSpend(name, model, res)
+			s.AddSpend(state.Spend{Role: name, Model: model, Runs: 1, Turns: res.Turns, Cost: res.Cost, CacheRead: res.CacheRead})
 		}
 	})
 	broke := ""
@@ -385,7 +386,7 @@ func (j *job) priorRun(n int, data roles.Data) roles.Data {
 // report, for the next time the step runs.
 func (j *job) recordRun(n int) {
 	head := gitx.Output(j.dir, "rev-parse", "HEAD")
-	j.setState(func(s *jobState) {
+	j.setState(func(s *state.Job) {
 		if s.StepHeads == nil {
 			s.StepHeads = map[int]string{}
 		}

@@ -22,6 +22,7 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/chrisrob11/prfoundry/internal/sandbox"
+	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/urfave/cli/v3"
 )
 
@@ -180,7 +181,7 @@ type job struct {
 	contextDir   string   // <job>/context: codebase map and setup output
 	contextFiles []string // files in contextDir, listed in every prompt
 	stateMu      sync.Mutex
-	state        jobState // what's in <job>/state.json
+	state        state.Job // what's in <job>/state.json
 	in           string
 	mode         string
 	claude       string

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // expectEnv is an env with roles that commit, do nothing, leave untracked
@@ -67,7 +68,7 @@ func TestExpectResume(t *testing.T) {
 		t.Fatalf("run: exit %d, want %d", code, exitExpect)
 	}
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
-	if st := readState(t, jobDir); st.State != stateFailed || st.Step != 1 || st.Exit == nil || *st.Exit != exitExpect {
+	if st := readState(t, jobDir); st.State != state.Failed || st.Step != 1 || st.Exit == nil || *st.Exit != exitExpect {
 		t.Errorf("state = %+v", st)
 	}
 	if n := len(e.calls(t)); n != 1 {

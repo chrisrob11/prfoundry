@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
 // fakeGH records each call in $FAKE_GH_LOG. "pr list --state open" finds the
@@ -193,7 +195,7 @@ func TestResume(t *testing.T) {
 		}
 	}
 	after := readState(t, jobDir)
-	if after.State != stateDone || after.Step != 3 || len(after.Roles) != 3 || !after.Started.Equal(before.Started) || after.Cost < before.Cost+0.099 {
+	if after.State != state.Done || after.Step != 3 || len(after.Roles) != 3 || !after.Started.Equal(before.Started) || after.Cost < before.Cost+0.099 {
 		t.Errorf("state after resume = %+v (before: %+v)", after, before)
 	}
 
@@ -209,33 +211,15 @@ func TestResume(t *testing.T) {
 	}
 
 	running := after
-	running.State, running.PID = stateRunning, os.Getpid()
+	running.State, running.PID = state.Running, os.Getpid()
 	b, _ := json.Marshal(running)
-	writeFileT(t, filepath.Join(jobDir, stateFile), string(b))
+	writeFileT(t, filepath.Join(jobDir, state.FileName), string(b))
 	if code := e.run(t, "resume", "origin/b", "--from", "1"); code != exitUsage {
 		t.Errorf("resuming a running job: exit %d, want %d", code, exitUsage)
 	}
 	for _, args := range [][]string{{"resume"}, {"resume", "origin/nope"}, {"resume", "origin/b", "--from", "9"}} {
 		if code := e.run(t, args...); code != exitUsage {
 			t.Errorf("%v: exit %d, want %d", args, code, exitUsage)
-		}
-	}
-}
-
-// TestFindJobFromTheWorkdir: a job named from inside the workdir, where
-// <repo>/<job> is also a relative path, comes back with an absolute folder.
-func TestFindJobFromTheWorkdir(t *testing.T) {
-	workdir := t.TempDir()
-	jobDir := filepath.Join(workdir, "origin", "b")
-	writeFileT(t, filepath.Join(jobDir, stateFile), `{"repo":"origin"}`)
-	t.Chdir(workdir)
-	for _, target := range []string{"origin/b", jobDir} {
-		s, err := findJob("elsewhere", target)
-		if err != nil {
-			t.Fatalf("findJob(%q): %v", target, err)
-		}
-		if !sameDir(s.JobDir, jobDir) || !filepath.IsAbs(s.JobDir) {
-			t.Errorf("findJob(%q).JobDir = %q, want %q", target, s.JobDir, jobDir)
 		}
 	}
 }
@@ -290,8 +274,8 @@ func TestClean(t *testing.T) {
 
 	// A running job is never touched.
 	live := filepath.Join(e.root, "work", "app", "live")
-	b, _ := json.Marshal(jobState{Repo: "app", Job: "live", State: stateRunning, PID: os.Getpid(), JobDir: live, Started: time.Now(), Updated: time.Now()})
-	writeFileT(t, filepath.Join(live, stateFile), string(b))
+	b, _ := json.Marshal(state.Job{Repo: "app", Job: "live", State: state.Running, PID: os.Getpid(), JobDir: live, Started: time.Now(), Updated: time.Now()})
+	writeFileT(t, filepath.Join(live, state.FileName), string(b))
 	runPrfIO(t, "", "--home", e.home, "clean", "--yes", "--failed", "--force")
 	if !exists("live") {
 		t.Error("clean removed a running job")
