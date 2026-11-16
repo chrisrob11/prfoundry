@@ -338,6 +338,7 @@ func writeRound(dir string, r reviewRound) error {
 type reviewServer struct {
 	url       string
 	srv       *http.Server
+	ln        net.Listener
 	submitted chan reviewRound
 	activity  func() string
 	fileAt    func(path string) (string, bool) // a file at HEAD, for links the page can't find in the diff
@@ -398,6 +399,7 @@ func startReviewServer(dir, repo, job string, activity func() string) (*reviewSe
 	prefix := "/" + repo + "/" + unsafePathChars.ReplaceAllString(job, "-") + "/" + link.Token + "/"
 	s := &reviewServer{
 		url:       "http://" + ln.Addr().String() + prefix,
+		ln:        ln,
 		submitted: make(chan reviewRound, 1),
 		activity:  activity,
 	}
@@ -423,6 +425,9 @@ func (s *reviewServer) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_ = s.srv.Shutdown(ctx) // the job is done with the page; open connections just drop
+	// Serve may not have started yet, and then Shutdown cannot see the listener:
+	// close it here so the port is free when close returns.
+	_ = s.ln.Close()
 }
 
 // set moves the page to state, showing view.
