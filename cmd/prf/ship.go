@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/human"
 )
 
 // prNone is --pr-create's third value, beside config.PRDraft and config.PRReady: open no PR.
@@ -27,7 +28,7 @@ func (j *job) ship() int {
 	out, err := run(j.dir, "git", "push", "-u", "origin", j.branch)
 	j.event("PRF_PUSH branch=%s exit=%d", j.branch, exitCodeOf(err))
 	if err != nil {
-		logf("push failed, so no PR either: %s", oneLine(out, 300))
+		logf("push failed, so no PR either: %s", human.OneLine(out, 300))
 		return exitShip
 	}
 	j.setState(func(s *jobState) { s.Pushed = true })
@@ -82,7 +83,7 @@ func (j *job) openPR() (string, error) {
 	}
 	out, err := run(j.dir, "gh", args...)
 	if err != nil {
-		return "", fmt.Errorf("gh pr create: %s", oneLine(out, 300))
+		return "", fmt.Errorf("gh pr create: %s", human.OneLine(out, 300))
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	return strings.TrimSpace(lines[len(lines)-1]), nil // gh prints the URL last

@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/claude"
 	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/human"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
@@ -85,7 +87,7 @@ type roleSpend struct {
 }
 
 // addSpend adds one Claude run's result to the role's spend on model.
-func (s *jobState) addSpend(role, model string, res phaseResult) {
+func (s *jobState) addSpend(role, model string, res claude.Result) {
 	i := slices.IndexFunc(s.Spend, func(r roleSpend) bool { return r.Role == role && r.Model == model })
 	if i < 0 {
 		s.Spend = append(s.Spend, roleSpend{Role: role, Model: model})
@@ -93,9 +95,9 @@ func (s *jobState) addSpend(role, model string, res phaseResult) {
 	}
 	r := &s.Spend[i]
 	r.Runs++
-	r.Turns += res.turns
-	r.Cost += res.cost
-	r.CacheRead += res.cacheRead
+	r.Turns += res.Turns
+	r.Cost += res.Cost
+	r.CacheRead += res.CacheRead
 }
 
 // setState applies change to the job's state and rewrites state.json. It's
@@ -229,9 +231,9 @@ func stepOf(s jobState) string {
 // timeOf is how long a live job has run, or how long ago a finished one ended.
 func timeOf(s jobState) string {
 	if s.live() {
-		return shortDuration(time.Since(s.Started))
+		return human.Duration(time.Since(s.Started))
 	}
-	return shortDuration(time.Since(s.Updated)) + " ago"
+	return human.Duration(time.Since(s.Updated)) + " ago"
 }
 
 func detailOf(s jobState) string {

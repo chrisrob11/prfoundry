@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/chrisrob11/prfoundry/internal/claude"
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/itemname"
@@ -191,8 +192,8 @@ type job struct {
 	feed       io.Writer // the log, plus stderr with --verbose
 	summaries  io.Writer // where each phase's final message goes
 	sigs       chan os.Signal
-	cost       float64     // spent so far, including before a resume
-	lastResult phaseResult // the last Claude run's result
+	cost       float64       // spent so far, including before a resume
+	lastResult claude.Result // the last Claude run's result
 }
 
 // newJob fills in the settings shared by run and apply.

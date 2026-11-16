@@ -23,6 +23,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
+	"github.com/chrisrob11/prfoundry/internal/human"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
@@ -150,8 +151,8 @@ func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 				srv.set(pageStopped, j.reviewView(rounds, len(rounds)))
 				return end(code, "")
 			}
-			last.Fixed, last.FixCommit, last.Summary = true, gitx.Output(j.dir, "rev-parse", "HEAD"), j.lastResult.text
-			addReplies(last, j.lastResult.text)
+			last.Fixed, last.FixCommit, last.Summary = true, gitx.Output(j.dir, "rev-parse", "HEAD"), j.lastResult.Text
+			addReplies(last, j.lastResult.Text)
 			if err := writeRound(dir, *last); err != nil {
 				logf("saving the review: %v", err)
 			}
@@ -188,7 +189,7 @@ func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 		j.event("PRF_REVIEWED branch=%s phase=%s step=%s round=%d verdict=%s comments=%d", j.branch, p.name, step, r.Round, r.Verdict, len(r.Comments))
 		if r.Verdict == verdictApprove {
 			srv.set(pageApproved, j.reviewView(rounds, len(rounds)))
-			logf("[%s] %s: approved in round %d after %s", step, p.name, r.Round, shortDuration(time.Since(start)))
+			logf("[%s] %s: approved in round %d after %s", step, p.name, r.Round, human.Duration(time.Since(start)))
 			return end(0, "")
 		}
 		logf("[%s] %s: round %d: changes requested (%d comments)", step, p.name, r.Round, len(r.Comments))

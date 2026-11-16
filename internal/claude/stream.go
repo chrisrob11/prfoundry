@@ -1,4 +1,7 @@
-package main
+// Package claude is how prf talks to headless Claude Code: the arguments of
+// a `claude -p` call, reading the stream-json it prints, and recognizing
+// its usage-limit error.
+package claude
 
 import (
 	"bufio"
@@ -8,12 +11,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/human"
 )
 
-// claudeEvent is the part of a `claude -p --output-format stream-json` line
+// event is the part of a `claude -p --output-format stream-json` line
 // that prf reads.
-type claudeEvent struct {
+type event struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
 	Message struct {
@@ -33,53 +37,59 @@ type claudeEvent struct {
 	} `json:"usage"`
 }
 
-// phaseResult is what Claude's final "result" event said, if it sent one.
-type phaseResult struct {
-	got     bool
-	subtype string // "success", or why it stopped, e.g. "error_max_budget_usd"
-	text    string
-	isError bool
-	turns   int
-	cost    float64
-	// cacheRead is the context tokens Claude re-read over the run's turns:
+// Result is what Claude's final "result" event said, if it sent one.
+type Result struct {
+	Got     bool
+	Subtype string // "success", or why it stopped, e.g. "error_max_budget_usd"
+	Text    string
+	IsError bool
+	Turns   int
+	Cost    float64
+	// CacheRead is the context tokens Claude re-read over the run's turns:
 	// most of a long step's cost.
-	cacheRead int64
+	CacheRead int64
 }
 
-// progress tracks what Claude is doing during one phase, for the
-// periodic "working" line.
-type progress struct {
+// OverBudget reports whether Claude stopped at its --max-budget-usd.
+func (r Result) OverBudget() bool {
+	return r.Subtype == "error_max_budget_usd"
+}
+
+// Progress tracks what Claude is doing during one run, for the periodic
+// "working" line.
+type Progress struct {
 	mu    sync.Mutex
 	tools int
 	last  string
 }
 
-func (p *progress) record(activity string) {
+func (p *Progress) record(activity string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.tools++
 	p.last = activity
 }
 
-func (p *progress) snapshot() (tools int, last string) {
+// Snapshot returns how many tool calls Claude has made, and the last one.
+func (p *Progress) Snapshot() (tools int, last string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.tools, p.last
 }
 
-// followStream reads Claude's stream-json output until it ends. It copies
-// every line to raw, writes a readable line for each step to feed (with
-// paths under dir shown relative to it), records tool calls in prog, and
-// returns the final result. Lines that aren't JSON (such as errors) go to
-// feed as they are.
-func followStream(r io.Reader, raw, feed io.Writer, prog *progress, dir string) phaseResult {
-	var res phaseResult
+// Follow reads Claude's stream-json output until it ends. It copies every
+// line to raw, writes a readable line for each step to feed (with paths
+// under dir shown relative to it), records tool calls in prog, and returns
+// the final result. Lines that aren't JSON (such as errors) go to feed as
+// they are.
+func Follow(r io.Reader, raw, feed io.Writer, prog *Progress, dir string) Result {
+	var res Result
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), 64<<20) // tool results can be large
 	for sc.Scan() {
 		line := sc.Bytes()
 		_, _ = fmt.Fprintf(raw, "%s\n", line)
-		var ev claudeEvent
+		var ev event
 		if json.Unmarshal(line, &ev) != nil {
 			_, _ = fmt.Fprintf(feed, "%s\n", line)
 			continue
@@ -89,7 +99,7 @@ func followStream(r io.Reader, raw, feed io.Writer, prog *progress, dir string) 
 			for _, c := range ev.Message.Content {
 				switch c.Type {
 				case "text":
-					if text := oneLine(c.Text, 200); text != "" {
+					if text := human.OneLine(c.Text, 200); text != "" {
 						_, _ = fmt.Fprintf(feed, "  [claude] %s\n", text)
 					}
 				case "tool_use":
@@ -99,7 +109,7 @@ func followStream(r io.Reader, raw, feed io.Writer, prog *progress, dir string) 
 				}
 			}
 		case "result":
-			res = phaseResult{got: true, subtype: ev.Subtype, text: ev.Result, isError: ev.IsError, turns: ev.NumTurns, cost: ev.CostUSD, cacheRead: ev.Usage.CacheRead}
+			res = Result{Got: true, Subtype: ev.Subtype, Text: ev.Result, IsError: ev.IsError, Turns: ev.NumTurns, Cost: ev.CostUSD, CacheRead: ev.Usage.CacheRead}
 		}
 	}
 	return res
@@ -114,7 +124,7 @@ func describeTool(name string, input map[string]any, dir string) string {
 				if dir != "" {
 					v = strings.ReplaceAll(v, dir+string(filepath.Separator), "")
 				}
-				return oneLine(v, 120)
+				return human.OneLine(v, 120)
 			}
 		}
 		return ""
@@ -137,25 +147,4 @@ func describeTool(name string, input map[string]any, dir string) string {
 		what = "update the to-do list"
 	}
 	return strings.TrimSpace(fmt.Sprintf("[%s] %s", strings.ToLower(name), what))
-}
-
-// oneLine returns s's first non-empty line, shortened to max characters.
-func oneLine(s string, max int) string {
-	for line := range strings.SplitSeq(s, "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			if len(line) > max {
-				line = line[:max-3] + "..."
-			}
-			return line
-		}
-	}
-	return ""
-}
-
-// shortDuration formats d as 45s, 4m12s, or 1h3m.
-func shortDuration(d time.Duration) string {
-	if d < time.Hour {
-		return d.Round(time.Second).String()
-	}
-	return strings.TrimSuffix(d.Round(time.Minute).String(), "0s")
 }

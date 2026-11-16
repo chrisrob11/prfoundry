@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/human"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/urfave/cli/v3"
 )
@@ -44,21 +45,21 @@ func (a *app) costsCmd() *cli.Command {
 				return nil
 			}
 			if len(rows) == 0 {
-				_, _ = fmt.Fprintf(w, "no per-role spend recorded; total %s, all in jobs that ran before prf recorded it\n", usd(total))
+				_, _ = fmt.Fprintf(w, "no per-role spend recorded; total %s, all in jobs that ran before prf recorded it\n", human.USD(total))
 				return nil
 			}
 			tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 			_, _ = fmt.Fprintln(tw, "ROLE\tMODEL\tCOST\tSHARE\tRUNS\tTURNS/RUN\tCTX/TURN")
 			for _, r := range rows {
-				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f%%\t%d\t%.1f\t%s\n", r.Role, firstNonEmpty(r.Model, "-"), usd(r.Cost),
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.1f%%\t%d\t%.1f\t%s\n", r.Role, firstNonEmpty(r.Model, "-"), human.USD(r.Cost),
 					100*r.Cost/total, r.Runs, float64(r.Turns)/float64(max(1, r.Runs)), perTurn(r))
 			}
 			if err := tw.Flush(); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(w, "total %s", usd(total))
+			_, _ = fmt.Fprintf(w, "total %s", human.USD(total))
 			if unrecorded > 0 {
-				_, _ = fmt.Fprintf(w, ", %s of it in jobs with no per-role spend", usd(unrecorded))
+				_, _ = fmt.Fprintf(w, ", %s of it in jobs with no per-role spend", human.USD(unrecorded))
 			}
 			_, _ = fmt.Fprintln(w)
 			return nil

@@ -79,8 +79,8 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 					page(pageStopped)
 					return end(code, "")
 				}
-				last.Fixed, last.FixCommit, last.Summary = true, gitx.Output(j.dir, "rev-parse", "HEAD"), j.lastResult.text
-				addReplies(last, j.lastResult.text)
+				last.Fixed, last.FixCommit, last.Summary = true, gitx.Output(j.dir, "rev-parse", "HEAD"), j.lastResult.Text
+				addReplies(last, j.lastResult.Text)
 			} else { // re-run the step that asked
 				page(pageRerunning)
 				rerun := data

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chrisrob11/prfoundry/internal/claude"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
@@ -62,7 +63,7 @@ func TestRecordRun(t *testing.T) {
 	j.tmp = filepath.Join(j.jobDir, "tmp")
 	head := mustGit(t, clone, "rev-parse", "HEAD")
 
-	j.lastResult = phaseResult{text: "did it"}
+	j.lastResult = claude.Result{Text: "did it"}
 	j.recordRun(1)
 	if got := j.priorRun(1, roles.Data{}); got.PriorRun != head || got.PriorReport != j.reportPath(1) {
 		t.Errorf("after a run with a report: %+v", got)
@@ -71,7 +72,7 @@ func TestRecordRun(t *testing.T) {
 		t.Errorf("a step that never ran: %+v", got)
 	}
 
-	j.lastResult = phaseResult{}
+	j.lastResult = claude.Result{}
 	j.recordRun(1)
 	if got := j.priorRun(1, roles.Data{}); got.PriorRun != head || got.PriorReport != "" {
 		t.Errorf("a run with no report should drop the older one: %+v", got)
@@ -79,7 +80,7 @@ func TestRecordRun(t *testing.T) {
 
 	logs := captureStderr(t)
 	j.tmp = filepath.Join(j.jobDir, stateFile) // a file, so reports/ can't be made
-	j.lastResult = phaseResult{text: "did it"}
+	j.lastResult = claude.Result{Text: "did it"}
 	j.recordRun(1)
 	if !strings.Contains(logs.String(), "saving step 1's report: ") {
 		t.Errorf("log = %q", logs.String())

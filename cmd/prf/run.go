@@ -10,13 +10,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/claude"
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
+	"github.com/chrisrob11/prfoundry/internal/human"
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
@@ -142,9 +143,9 @@ func (j *job) runPhases(phases []phase) (err error) {
 			}
 			costNote := ""
 			if j.cost > 0 {
-				costNote = ", " + usd(j.cost)
+				costNote = ", " + human.USD(j.cost)
 			}
-			logf("pipeline %s: %d/%d steps succeeded in %s%s", pipelineName, done, total, shortDuration(time.Since(start)), costNote)
+			logf("pipeline %s: %d/%d steps succeeded in %s%s", pipelineName, done, total, human.Duration(time.Since(start)), costNote)
 			if code == 0 {
 				code = j.ship()
 			}
@@ -161,7 +162,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 func (j *job) runClaude(p phase, name, step, model string, data roles.Data, first bool) int {
 	for {
 		code := j.runClaudeOnce(p, name, step, model, data, first)
-		reset, hit := usageLimitReset(j.lastResult, time.Now())
+		reset, hit := j.lastResult.LimitReset(time.Now())
 		if code == 0 || !hit {
 			return code
 		}
@@ -181,7 +182,7 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	if model != "" {
 		label += " (" + model + ")"
 	}
-	j.lastResult = phaseResult{}
+	j.lastResult = claude.Result{}
 	prompt, err := p.render(data)
 	if err != nil {
 		logf("rendering role %s: %v", name, err)
@@ -191,7 +192,7 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	if j.maxCost > 0 {
 		left := math.Round((j.maxCost-j.cost)*100) / 100 // to the cent, so float error can't leave a sliver
 		if left <= 0 {
-			logf("[%s] %s: not started: the job has spent %s of its %s cap", step, label, usd(j.cost), usd(j.maxCost))
+			logf("[%s] %s: not started: the job has spent %s of its %s cap", step, label, human.USD(j.cost), human.USD(j.maxCost))
 			j.event("PRF_PHASE branch=%s phase=%s step=%s exit=%d stopped=max_cost", j.branch, name, step, exitBudget)
 			return exitBudget
 		}
@@ -200,31 +201,20 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 		}
 	}
 
-	args := []string{"-p", prompt, "--permission-mode", j.mode, "--output-format", "stream-json", "--verbose"}
-	if model != "" {
-		args = append(args, "--model", model) // before claude_args, so an explicit --model there still wins
-	}
-	if budget > 0 {
-		args = append(args, "--max-budget-usd", strconv.FormatFloat(budget, 'f', -1, 64))
-	}
+	call := claude.Call{Prompt: prompt, Mode: j.mode, Model: model, Budget: budget, Settings: j.settings, Extra: j.claudeArgs}
 	if j.pr != "" {
-		args = append(args, "--add-dir", filepath.Dir(j.pr))
+		call.Dirs = append(call.Dirs, filepath.Dir(j.pr))
 	}
 	if j.tmp != "" {
-		args = append(args, "--add-dir", j.tmp) // so the sandbox lets it write there
+		call.Dirs = append(call.Dirs, j.tmp) // so the sandbox lets it write there
 	}
-	for _, d := range j.writeDirs {
-		args = append(args, "--add-dir", d)
-	}
+	call.Dirs = append(call.Dirs, j.writeDirs...)
 	if len(j.contextFiles) > 0 {
-		args = append(args, "--add-dir", j.contextDir)
+		call.Dirs = append(call.Dirs, j.contextDir)
 	}
-	if j.settings != "" {
-		args = append(args, "--settings", j.settings)
-	}
-	claude := exec.Command(j.claude, append(args, j.claudeArgs...)...)
-	claude.Dir, claude.Env, claude.Stderr = j.dir, j.env, j.feed
-	stream, err := claude.StdoutPipe()
+	cmd := exec.Command(j.claude, call.Args()...)
+	cmd.Dir, cmd.Env, cmd.Stderr = j.dir, j.env, j.feed
+	stream, err := cmd.StdoutPipe()
 	if err != nil {
 		logf("running claude: %v", err)
 		return exitSetup
@@ -234,7 +224,7 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 		logf("opening --in: %v", err)
 		return exitSetup
 	}
-	claude.Stdin = stdin
+	cmd.Stdin = stdin
 
 	modelField := ""
 	if model != "" {
@@ -245,12 +235,12 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	j.setState(func(s *jobState) { s.State, s.Stage, s.Activity, s.ReviewURL = stateRunning, name, "", "" })
 	logf("[%s] %s: started", step, label)
 	_, _ = fmt.Fprintf(j.feed, "=== prf phase %s (step %s, pipeline %s%s) ===\n", name, step, pipelineName, strings.ReplaceAll(modelField, "=", " "))
-	phaseStart, prog := time.Now(), &progress{}
+	phaseStart, prog := time.Now(), &claude.Progress{}
 	expect, startHead := j.expectOf(p), ""
 	if expect != "" {
 		startHead = gitx.Output(j.dir, "rev-parse", "HEAD")
 	}
-	if err := claude.Start(); err != nil {
+	if err := cmd.Start(); err != nil {
 		logf("running claude: %v", err)
 		return exitSetup
 	}
@@ -261,8 +251,8 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 			j.setState(func(s *jobState) { s.Activity = last })
 		})
 	}()
-	res := followStream(stream, j.raw, j.feed, prog, j.dir)
-	err = claude.Wait()
+	res := claude.Follow(stream, j.raw, j.feed, prog, j.dir)
+	err = cmd.Wait()
 	close(stopHeartbeat)
 	<-heartbeatDone // so no "working" line follows the phase's result
 	if f, ok := stdin.(*os.File); ok && f != os.Stdin {
@@ -276,26 +266,26 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 		}
 	}
 
-	code := claude.ProcessState.ExitCode()
+	code := cmd.ProcessState.ExitCode()
 	if code < 0 { // killed by a signal
 		code = 130
 	}
-	if res.isError && code == 0 {
+	if res.IsError && code == 0 {
 		code = 1 // Claude said the run failed even though it exited cleanly
 	}
-	overBudget := res.subtype == "error_max_budget_usd"
+	overBudget := res.OverBudget()
 	if overBudget {
 		code = exitBudget
 	}
-	if res.text != "" {
-		_, _ = fmt.Fprintf(j.log, "--- %s summary ---\n%s\n", name, res.text)
-		_, _ = fmt.Fprintf(j.summaries, "%s\n", res.text)
+	if res.Text != "" {
+		_, _ = fmt.Fprintf(j.log, "--- %s summary ---\n%s\n", name, res.Text)
+		_, _ = fmt.Fprintf(j.summaries, "%s\n", res.Text)
 	}
 	j.lastResult = res
-	j.cost += res.cost
+	j.cost += res.Cost
 	j.setState(func(s *jobState) {
 		s.Cost = j.cost
-		if res.got {
+		if res.Got {
 			s.addSpend(name, model, res)
 		}
 	})
@@ -307,8 +297,8 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	}
 
 	details := ""
-	if res.got {
-		details = fmt.Sprintf(" error=%t turns=%d cost=%.2f", res.isError, res.turns, res.cost)
+	if res.Got {
+		details = fmt.Sprintf(" error=%t turns=%d cost=%.2f", res.IsError, res.Turns, res.Cost)
 	}
 	if overBudget {
 		details += " stopped=max_cost"
@@ -317,12 +307,12 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 		details += " expect=" + expect
 	}
 	j.event("PRF_PHASE branch=%s phase=%s step=%s exit=%d%s", j.branch, name, step, code, details)
-	took := shortDuration(time.Since(phaseStart))
+	took := human.Duration(time.Since(phaseStart))
 	switch {
 	case code == 0:
 		logf("[%s] %s: done in %s%s", step, label, took, resultNote(res))
 	case overBudget:
-		logf("[%s] %s: stopped after %s: reached its %s budget (%s spent)", step, label, took, usd(budget), usd(res.cost))
+		logf("[%s] %s: stopped after %s: reached its %s budget (%s spent)", step, label, took, human.USD(budget), human.USD(res.Cost))
 	case broke != "":
 		logf("[%s] %s: failed after %s: expected %s, but it %s", step, label, took, expect, broke)
 	default:
@@ -402,13 +392,13 @@ func (j *job) recordRun(n int) {
 		s.StepHeads[n] = head
 	})
 	path := j.reportPath(n)
-	if j.lastResult.text == "" {
+	if j.lastResult.Text == "" {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) { // so a later run isn't pointed at an older report
 			logf("warning: removing an older report: %v", err)
 		}
 		return
 	}
-	if err := textfile.Write(path, j.lastResult.text+"\n"); err != nil {
+	if err := textfile.Write(path, j.lastResult.Text+"\n"); err != nil {
 		logf("saving step %d's report: %v", n, err)
 	}
 }
@@ -473,7 +463,7 @@ const stateEvery = 2 * time.Second
 
 // heartbeat prints a "working" line every interval, and passes Claude's
 // latest activity to save every stateEvery, until stop closes.
-func heartbeat(interval time.Duration, step, name string, start time.Time, prog *progress, stop <-chan struct{}, save func(last string)) {
+func heartbeat(interval time.Duration, step, name string, start time.Time, prog *claude.Progress, stop <-chan struct{}, save func(last string)) {
 	tick, saveTick := time.NewTicker(interval), time.NewTicker(min(stateEvery, interval))
 	defer tick.Stop()
 	defer saveTick.Stop()
@@ -483,13 +473,13 @@ func heartbeat(interval time.Duration, step, name string, start time.Time, prog 
 		case <-stop:
 			return
 		case <-saveTick.C:
-			if _, last := prog.snapshot(); last != saved {
+			if _, last := prog.Snapshot(); last != saved {
 				save(last)
 				saved = last
 			}
 		case <-tick.C:
-			tools, last := prog.snapshot()
-			msg := fmt.Sprintf("[%s] %s: working (%s, %d tool calls", step, name, shortDuration(time.Since(start)), tools)
+			tools, last := prog.Snapshot()
+			msg := fmt.Sprintf("[%s] %s: working (%s, %d tool calls", step, name, human.Duration(time.Since(start)), tools)
 			if last != "" {
 				msg += "; last: " + last
 			}
@@ -498,22 +488,14 @@ func heartbeat(interval time.Duration, step, name string, start time.Time, prog 
 	}
 }
 
-// usd formats dollars to the cent, or more precisely below a cent.
-func usd(v float64) string {
-	if v > 0 && v < 0.01 {
-		return "$" + strconv.FormatFloat(v, 'f', -1, 64)
-	}
-	return fmt.Sprintf("$%.2f", v)
-}
-
 // resultNote describes Claude's result event for a progress line.
-func resultNote(res phaseResult) string {
-	if !res.got {
+func resultNote(res claude.Result) string {
+	if !res.Got {
 		return ""
 	}
-	note := fmt.Sprintf(" (%d turns, $%.2f)", res.turns, res.cost)
-	if res.isError {
-		note = fmt.Sprintf(" (Claude reported an error: %s)", oneLine(res.text, 160))
+	note := fmt.Sprintf(" (%d turns, $%.2f)", res.Turns, res.Cost)
+	if res.IsError {
+		note = fmt.Sprintf(" (Claude reported an error: %s)", human.OneLine(res.Text, 160))
 	}
 	return note
 }
