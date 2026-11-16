@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/codeindex"
 	"github.com/urfave/cli/v3"
 )
 
@@ -18,7 +19,7 @@ func indexCmd(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	start := time.Now()
-	if err := buildIndex(dir, filepath.Base(dir), firstNonEmpty(gitOutput(dir, "branch", "--show-current"), "HEAD"), c.String("out")); err != nil {
+	if err := codeindex.Build(dir, filepath.Base(dir), firstNonEmpty(gitOutput(dir, "branch", "--show-current"), "HEAD"), c.String("out")); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "wrote %s in %s\n", filepath.Join(c.String("out"), "index.md"), time.Since(start).Round(time.Millisecond))
@@ -46,7 +47,7 @@ func (j *job) prepareContext() error {
 	if p.Index == nil || *p.Index {
 		logf("building codebase map")
 		j.setupStage("building codebase map")
-		if err := buildIndex(j.dir, j.name, j.branch, j.contextDir); err != nil {
+		if err := codeindex.Build(j.dir, j.name, j.branch, j.contextDir); err != nil {
 			logf("warning: no codebase map: %v", err)
 		}
 	}
