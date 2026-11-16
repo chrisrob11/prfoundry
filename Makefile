@@ -1,7 +1,9 @@
 GOLANGCI_LINT ?= golangci-lint
 # COVER_FLOOR is the lowest total statement coverage `make cover-check` (and so `make ci`)
-# accepts, in percent. Raise it when coverage rises; never lower it to pass.
-COVER_FLOOR ?= 66
+# accepts, in percent, measured across the whole module (-coverpkg), so code the end-to-end
+# tests reach counts. It sits about a point under the total because linux and macos differ
+# slightly. Raise it when coverage rises; never lower it to pass.
+COVER_FLOOR ?= 89
 
 .PHONY: build test cover cover-check lint fmt fmt-check ci install
 
@@ -16,7 +18,7 @@ test:
 
 # cover runs the tests once, writing coverage.out, and prints the total.
 cover:
-	go test -race -count=1 -coverprofile=coverage.out ./...
+	go test -race -count=1 -coverpkg=./... -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out | tail -1
 
 cover-check: cover
