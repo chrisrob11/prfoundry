@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prf job</title>
+<link rel="stylesheet" href="../../style.css">
+</head>
+<body>
+<header>
+  <a id="back" href="../../">&larr; all jobs</a>
+  <h1 id="title"></h1>
+  <span id="badge"></span>
+  <span class="spacer"></span>
+  <div id="links" class="links"></div>
+</header>
+<main>
+  <div id="error" class="err" hidden></div>
+  <div class="grid">
+    <section class="panel"><h2>Job</h2><div class="body"><dl id="facts" class="facts"></dl></div></section>
+    <section class="panel"><h2>Pipeline</h2><ol id="steps" class="steps"></ol></section>
+    <section class="panel"><h2>Spend</h2><div class="scroll"><table>
+      <thead><tr><th>Role</th><th>Model</th><th class="num">Runs</th><th class="num">Turns</th><th class="num">Cost</th></tr></thead>
+      <tbody id="spend"></tbody></table></div></section>
+  </div>
+  <section class="panel"><h2>claude.log <span class="spacer"></span><span id="logNote" class="faint"></span></h2>
+    <pre id="log" class="log"></pre></section>
+  <section class="panel"><h2>Diff <span id="diffBase" class="faint mono"></span><span class="spacer"></span><span id="diffStat" class="faint"></span></h2>
+    <div id="diffNote" class="note" hidden></div><pre id="diff" class="diff"></pre></section>
+  <section id="checksPanel" class="panel" hidden><h2>@check rounds</h2><div id="checks"></div></section>
+  <section id="reviewsPanel" class="panel" hidden><h2>@review rounds</h2><div id="reviews"></div></section>
+  <section id="asksPanel" class="panel" hidden><h2>@ask rounds</h2><div id="asks"></div></section>
+</main>
+<script>
+"use strict";
+// Every value from a job folder goes into the page as text, never as HTML:
+// logs and diffs are whatever a step wrote.
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else n.setAttribute(k, v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return n;
+}
+const $ = (id) => document.getElementById(id);
+const parts = location.pathname.split("/");
+const base = "/" + parts[1] + "/";
+const repo = decodeURIComponent(parts[3] || ""), job = decodeURIComponent(parts[4] || "");
+const api = base + "api/jobs/" + encodeURIComponent(repo) + "/" + encodeURIComponent(job);
+const httpURL = (u) => (/^https?:\/\//i.test(u || "") ? u : null);
+const usd = (v) => (v > 0 && v < 0.01 ? "<$0.01" : "$" + (v || 0).toFixed(2));
+function when(t) {
+  if (!t || t.startsWith("0001")) return "";
+  return new Date(t).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+async function get(path) {
+  const res = await fetch(api + path, { cache: "no-store" });
+  if (!res.ok) throw new Error(res.status === 404 ? "no such job" : "HTTP " + res.status);
+  return res.json();
+}
+function showError(e) {
+  $("error").textContent = "Can't load the job: " + e.message;
+  $("error").hidden = false;
+}
+
+function badgeText(d) {
+  if (d.state === "paused" && d.resume_at) return "paused until " + when(d.resume_at);
+  if (d.state === "review") return "waiting for review";
+  if (d.state === "ask") return "waiting for answer";
+  if (d.state === "died") return "died: process " + d.pid + " is gone";
+  return d.state + (d.exit != null && d.exit !== 0 ? " (exit " + d.exit + ")" : "");
+}
+function fact(name, value, mono) {
+  if (value == null || value === "") return [];
+  return [el("dt", {}, name), el("dd", { class: mono ? "mono" : null }, value)];
+}
+function roundBody(r) {
+  return [
+    r.question ? el("div", { class: "text muted" }, r.question) : null,
+    r.body ? el("div", { class: "text" }, r.body) : null,
+    (r.comments || []).map((c) => el("div", { class: "comment" },
+      el("div", { class: "sub" }, "#" + c.id + (c.path ? " " + c.path + (c.line ? ":" + c.line : "") : "")),
+      c.body, c.reply ? el("div", { class: "reply" }, "reply: " + c.reply) : null)),
+    r.summary ? el("div", { class: "text muted" }, "fix: " + r.summary) : null,
+  ];
+}
+function round(r, label) {
+  const info = [r.verdict, when(r.submitted), r.comments && r.comments.length ? r.comments.length + " comments" : "", r.fixed ? "addressed" : ""];
+  return el("details", { id: label.replace(/\W+/g, "-").toLowerCase() },
+    el("summary", {}, label + " ", el("span", { class: "muted" }, info.filter(Boolean).join(" · "))), roundBody(r));
+}
+
+async function refreshJob() {
+  let d;
+  try { d = await get(""); } catch (e) { showError(e); return; }
+  $("error").hidden = true;
+  document.title = (d.waiting ? "(waiting) " : "") + d.repo + "/" + d.job + " · prf";
+  $("title").textContent = d.repo + " / " + d.job;
+  $("badge").replaceChildren(el("span", { class: "badge " + d.state }, badgeText(d)));
+  const links = [];
+  const review = httpURL(d.review_url);
+  if (review) links.push(el("a", { class: "btn", href: review, target: "_blank", rel: "noopener" }, d.state === "ask" ? "Answer" : "Review"));
+  const pr = httpURL(d.pr_url);
+  if (pr) links.push(el("a", { href: pr, target: "_blank", rel: "noopener" }, "Pull request"));
+  $("links").replaceChildren(...links);
+  $("facts").replaceChildren(
+    ...fact("Branch", d.branch, true), ...fact("Pipeline", d.pipeline),
+    ...fact("Progress", d.step > 0 ? d.step + "/" + d.steps + " " + d.stage : d.stage),
+    ...fact("Activity", d.activity, true), ...fact("Agent", d.agent + (d.model ? " · " + d.model : "")),
+    ...fact("Started", when(d.started)), ...fact("Elapsed", d.elapsed), ...fact("Cost", usd(d.cost)),
+    ...fact("Checkout", d.dir, true), ...fact("Base", d.base_commit ? d.base_commit.slice(0, 12) : "", true),
+    ...fact("PR spec", d.pr, true), ...fact("Task", d.task));
+  $("steps").replaceChildren(...d.pipeline_steps.map((s) => el("li", { class: s.status === "current" ? "current" : null },
+    el("span", { class: "n" }, s.n), el("span", { class: "name" }, s.name),
+    el("span", { class: "badge " + s.status }, s.status),
+    s.model ? el("span", { class: "sub" }, s.model) : null,
+    s.gate === "check" && s.run ? el("span", { class: "mono faint" }, s.run) : null,
+    s.fix_role ? el("span", { class: "sub" }, "fix: " + s.fix_role) : null)));
+  $("spend").replaceChildren(...(d.spend.length ? d.spend.map((s) => el("tr", {},
+    el("td", {}, s.role), el("td", {}, s.model || "default"), el("td", { class: "num" }, s.runs),
+    el("td", { class: "num" }, s.turns), el("td", { class: "num" }, usd(s.cost))))
+    : [el("tr", {}, el("td", { colspan: "5", class: "muted" }, "nothing spent yet"))]));
+  $("checksPanel").hidden = d.checks.length === 0;
+  $("checks").replaceChildren(...d.checks.map((c) => el("div", { class: "body" },
+    el("a", { href: api + "/checks/" + c.step + "/" + c.round, target: "_blank", rel: "noopener" }, "step " + c.step + ", round " + c.round),
+    el("span", { class: "faint" }, " " + Math.ceil(c.size / 1024) + " KiB"))));
+  $("reviewsPanel").hidden = d.reviews.length === 0 && !review;
+  $("reviews").replaceChildren(
+    review && d.state === "review" ? el("div", { class: "body" }, el("a", { href: review, target: "_blank", rel: "noopener" }, "Open the live review page")) : null,
+    ...d.reviews.map((r) => round(r, "Round " + r.round)));
+  $("asksPanel").hidden = d.asks.length === 0 && d.state !== "ask";
+  $("asks").replaceChildren(
+    review && d.state === "ask" ? el("div", { class: "body" }, el("a", { href: review, target: "_blank", rel: "noopener" }, "Open the live question page")) : null,
+    ...d.asks.flatMap((a) => a.rounds.map((r) => round(r, "Step " + a.step + ", question " + r.round))));
+}
+
+async function refreshLog() {
+  let t;
+  try { t = await get("/log"); } catch (e) { return; }
+  const pre = $("log");
+  const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 4;
+  pre.textContent = t.lines.length ? t.lines.join("\n") : "(empty)";
+  $("logNote").textContent = t.truncated ? "last " + t.lines.length + " lines" : "";
+  if (atBottom) pre.scrollTop = pre.scrollHeight;
+}
+
+let lastDiff = null;
+async function refreshDiff() {
+  let d;
+  try { d = await get("/diff"); } catch (e) { return; }
+  const key = d.base + "\n" + d.truncated + "\n" + d.note + "\n" + d.text;
+  if (key === lastDiff) return;
+  lastDiff = key;
+  $("diffBase").textContent = d.base ? "git diff " + d.base.slice(0, 12) : "";
+  const notes = [];
+  if (d.note) notes.push(d.note);
+  if (d.truncated) notes.push("Truncated: the diff is too large to show whole. Run the git diff above in the checkout to see the rest.");
+  $("diffNote").textContent = notes.join(" ");
+  $("diffNote").hidden = notes.length === 0;
+  const lines = d.text ? d.text.replace(/\n$/, "").split("\n") : [];
+  let adds = 0, dels = 0;
+  $("diff").replaceChildren(...lines.map((l) => {
+    let cls = null;
+    if (l.startsWith("diff --git")) cls = "file";
+    else if (l.startsWith("+++") || l.startsWith("---")) cls = "faint";
+    else if (l.startsWith("@@")) cls = "hunk";
+    else if (l.startsWith("+")) { cls = "add"; adds++; }
+    else if (l.startsWith("-")) { cls = "del"; dels++; }
+    return el("span", { class: cls }, l);
+  }));
+  if (!lines.length && !d.note) $("diff").textContent = "(no changes yet)";
+  $("diffStat").textContent = lines.length ? "+" + adds + " −" + dels : "";
+}
+
+refreshJob(); refreshLog(); refreshDiff();
+setInterval(() => { refreshJob(); refreshLog(); }, 2000);
+setInterval(refreshDiff, 10000);
+</script>
+</body>
+</html>

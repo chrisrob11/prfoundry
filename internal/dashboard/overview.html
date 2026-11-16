@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prf jobs</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>prf jobs</h1>
+  <span id="summary" class="muted"></span>
+  <span class="spacer"></span>
+  <label class="muted">repo <select id="repo"><option value="">all</option></select></label>
+  <label class="muted">state <select id="state">
+    <option value="">all</option>
+    <option>review</option><option>ask</option><option>running</option><option>setup</option>
+    <option>paused</option><option>done</option><option>failed</option><option>died</option>
+  </select></label>
+</header>
+<main>
+  <div id="error" class="err" hidden></div>
+  <div class="panel scroll">
+    <table>
+      <thead><tr>
+        <th>Job</th><th>State</th><th>Progress</th><th class="hide-narrow">Agent</th>
+        <th class="hide-narrow">Started</th><th class="num">Elapsed</th><th class="num">Cost</th><th></th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>No jobs.</div>
+  </div>
+</main>
+<script>
+"use strict";
+// Every value from a job folder goes into the page as text, never as HTML.
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else n.setAttribute(k, v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return n;
+}
+const $ = (id) => document.getElementById(id);
+const base = "/" + location.pathname.split("/")[1] + "/";
+const httpURL = (u) => (/^https?:\/\//i.test(u || "") ? u : null);
+const usd = (v) => (v > 0 && v < 0.01 ? "<$0.01" : "$" + (v || 0).toFixed(2));
+function when(t) {
+  if (!t || t.startsWith("0001")) return "";
+  const d = new Date(t), now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === now.toDateString() ? time : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + time;
+}
+function badge(j) {
+  let text = j.state;
+  if (j.state === "paused" && j.resume_at) text = "paused until " + when(j.resume_at);
+  if (j.state === "review") text = "waiting for review";
+  if (j.state === "ask") text = "waiting for answer";
+  if ((j.state === "done" || j.state === "failed") && j.exit != null && j.exit !== 0) text += " (exit " + j.exit + ")";
+  const title = j.state === "died" ? "process " + j.pid + " is gone" : null;
+  return el("span", { class: "badge " + j.state, title }, text);
+}
+function row(j) {
+  const page = base + "job/" + encodeURIComponent(j.repo) + "/" + encodeURIComponent(j.job);
+  const progress = j.step > 0 ? j.step + "/" + j.steps + " " + j.stage : j.stage || "-";
+  const links = el("div", { class: "links" });
+  const review = httpURL(j.review_url);
+  if (review) links.append(el("a", { class: "btn", href: review, target: "_blank", rel: "noopener" }, j.state === "ask" ? "Answer" : "Review"));
+  const pr = httpURL(j.pr_url);
+  if (pr) links.append(el("a", { href: pr, target: "_blank", rel: "noopener" }, "PR"));
+  return el("tr", {},
+    el("td", {}, el("a", { href: page }, j.job), el("div", { class: "sub" }, j.repo + " · " + j.branch)),
+    el("td", {}, badge(j)),
+    el("td", {}, el("div", {}, progress), j.activity ? el("div", { class: "activity", title: j.activity }, j.activity) : null),
+    el("td", { class: "hide-narrow" }, j.agent, j.model ? el("div", { class: "sub" }, j.model) : null),
+    el("td", { class: "hide-narrow" }, when(j.started)),
+    el("td", { class: "num" }, j.elapsed),
+    el("td", { class: "num" }, usd(j.cost)),
+    el("td", {}, links));
+}
+function setOptions(select, values) {
+  const have = new Set([...select.options].map((o) => o.value));
+  for (const v of values) if (!have.has(v)) select.append(el("option", { value: v }, v));
+}
+function filters() {
+  const q = new URLSearchParams();
+  if ($("repo").value) q.set("repo", $("repo").value);
+  if ($("state").value) q.set("state", $("state").value);
+  return q.toString();
+}
+async function refresh() {
+  try {
+    const res = await fetch(base + "api/jobs?" + filters(), { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const o = await res.json();
+    setOptions($("repo"), o.repos);
+    $("rows").replaceChildren(...o.jobs.map(row));
+    $("empty").hidden = o.jobs.length > 0;
+    const waiting = o.jobs.filter((j) => j.waiting).length;
+    const live = o.jobs.filter((j) => ["running", "setup", "paused"].includes(j.state)).length;
+    $("summary").textContent = o.jobs.length + " jobs · " + live + " running" + (waiting ? " · " + waiting + " waiting for you" : "");
+    document.title = (waiting ? "(" + waiting + ") " : "") + "prf jobs";
+    $("error").hidden = true;
+  } catch (e) {
+    $("error").textContent = "Can't reach prf ui: " + e.message;
+    $("error").hidden = false;
+  }
+}
+const params = new URLSearchParams(location.search);
+for (const k of ["repo", "state"]) {
+  if (params.get(k)) { setOptions($(k), [params.get(k)]); $(k).value = params.get(k); }
+  $(k).addEventListener("change", () => { history.replaceState(null, "", "?" + filters()); refresh(); });
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

@@ -120,6 +120,11 @@ func (r Runtime) withDefaults() Runtime {
 	return r
 }
 
+// Browse opens url in your browser, through OpenBrowser or its default.
+func (r Runtime) Browse(url string) error {
+	return r.withDefaults().OpenBrowser(url)
+}
+
 // commandGrace is how long a command prf stops, or the processes a
 // finished command left running, get to exit before they're killed.
 const commandGrace = 5 * time.Second

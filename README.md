@@ -54,6 +54,9 @@ prf run --repo git@github.com:me/app.git --pr ~/plans/login.md
 
 # 4. From another terminal, or afterwards: where is every job?
 prf status
+
+# Watch everything in your browser: every job, its log, its diff, and what's waiting for you.
+prf ui
 ```
 
 The result is a branch in the job's clone, with each role's commits on it:
@@ -89,7 +92,7 @@ prf run --repo app --pr login                          # feature is now app's de
 | [Roles and pipelines](docs/roles-and-pipelines.md) | Which roles and models run, what a step must leave behind, the built-in roles, writing and managing roles |
 | [Gates](docs/gates.md) | `@review` (human review), `@ask` (questions from a step) and `@check` (real checks) |
 | [Codebase map](docs/codebase-map.md) | The map prf builds for every job, and the repo's setup commands |
-| [Monitoring](docs/monitoring.md) | The job folder, progress output, `prf status`, `prf costs`, status lines |
+| [Monitoring](docs/monitoring.md) | The job folder, progress output, `prf status`, `prf ui`, `prf costs`, status lines |
 | [Orchestrating](docs/orchestrating.md) | Running waves of PRs, pushing and opening PRs, cost caps, exit codes, resume and clean |
 | [Sandbox](docs/sandbox.md) | What Claude can reach by default, how to change it, and mise |
 | [Command reference](docs/commands.md) | Every command and flag |

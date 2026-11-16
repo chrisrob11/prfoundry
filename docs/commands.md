@@ -8,6 +8,7 @@
 | [`prf run`](#prf-run) | Clone a repo into a fresh job folder, switch to a branch, and run a pipeline |
 | [`prf apply`](#prf-apply) | Run a pipeline, roles, or a single prompt in an existing checkout |
 | [`prf status`](#prf-status) | Every job's state, step, stage and latest activity |
+| [`prf ui`](#prf-ui) | A read-only dashboard of every job in your browser |
 | [`prf costs`](#prf-costs) | What each role has cost across jobs, by role and model |
 | [`prf resume`](#prf-resume) | Re-run a failed or died job from where it stopped |
 | [`prf clean`](#prf-clean) | Remove finished job folders |
@@ -68,6 +69,13 @@ changes, because Claude's commits may include them.
 
 `prf status [--repo <name>] [--json] [--workdir <dir>]`: every job's state, step, stage and
 latest activity. See [prf status](monitoring.md#prf-status).
+
+## prf ui
+
+`prf ui [--port <n>] [--no-open] [--repo <name>] [--workdir <dir>]`: serve a read-only dashboard
+of every job on `127.0.0.1`, print its URL and open it in your browser (`--no-open` only prints
+it). `--port` picks the port; by default it's the last one used, if it's free. It runs until
+Ctrl-C. See [prf ui](monitoring.md#prf-ui).
 
 ## prf costs
 

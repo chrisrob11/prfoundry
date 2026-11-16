@@ -103,7 +103,43 @@ each role cost, by role and model, summed over every run of it (fix rounds, re-r
 always replaced in one step, so a reader never sees half a file. `exit` appears once the job has
 finished.
 
-To watch a running wave: `while sleep 5; do clear; prf status; done`.
+To watch a running wave: `while sleep 5; do clear; prf status; done`, or `prf ui`.
+
+## prf ui
+
+`prf ui` serves a dashboard of every job under the workdir on localhost, prints its URL, and opens
+it in your browser. It's read-only: it reads the job folders and changes nothing, so it shows
+every job whoever started it, and it can run beside them, or be stopped (Ctrl-C), at any time.
+
+```
+$ prf ui
+http://127.0.0.1:52144/9f2c0d4e7a1b3c5d6e8f0a1b2c3d4e5f/
+```
+
+The overview has a row per job: repo, job and branch; its state, as in `prf status` (`paused`
+with when its step runs again, and `died` when its process is gone); `step/total` and stage, with
+the latest activity; the agent and model; when it started and how long it has run; its cost; and
+links to its PR and, at a gate, a **Review** or **Answer** button for its page. Jobs waiting for
+you at a `@review` or `@ask` gate come first, then running ones (setup and paused too), then the
+rest, each group most recently updated first. Filter by repo and state; the page updates every
+2 seconds.
+
+A job's page shows its pipeline with each gate and the current step marked, its spend by role and
+model, the last 200 lines of `claude.log` as they're written, the diff so far (`git diff
+<base_commit>` in its checkout, committed and uncommitted changes to tracked files, cut at
+512 KiB with a note saying so), each `@check` round's log, and its `@review` and `@ask` rounds
+with their comments and replies, plus a link to the live review page while one is waiting.
+
+The page is only on `127.0.0.1`, under a random token in its path; any request without the token
+gets a 404. The port and token are kept in `<home>/ui.json`, so the URL, and a bookmark of it,
+stays the same next time, unless that port has been taken meanwhile. `--port` picks the port
+(an error if it's taken), `--no-open` only prints the URL, and `--repo` and `--workdir` work as in
+`prf status`. Delete `ui.json` to get a new token.
+
+The page reads a small JSON API under the same token, which scripts can use too: `api/jobs`
+(the overview, with `?repo=` and `?state=` filters), `api/jobs/<repo>/<job>` (one job),
+`api/jobs/<repo>/<job>/log`, `api/jobs/<repo>/<job>/diff`, and
+`api/jobs/<repo>/<job>/checks/<step>/<round>` (a check round's log, as text).
 
 ## prf costs
 
