@@ -126,21 +126,31 @@ func List(workdir, repo string) ([]Job, error) {
 	}
 	var states []Job
 	for _, path := range paths {
-		b, err := os.ReadFile(path)
+		s, err := Read(filepath.Dir(path))
 		if err != nil {
 			continue
-		}
-		var s Job
-		if json.Unmarshal(b, &s) != nil {
-			continue
-		}
-		if s.Live() && !ProcessAlive(s.PID) {
-			s.State = Died
 		}
 		states = append(states, s)
 	}
 	slices.SortFunc(states, func(a, b Job) int { return b.Updated.Compare(a.Updated) })
 	return states, nil
+}
+
+// Read returns the state of the job in jobDir, marked died if it says it's
+// live but its process is gone.
+func Read(jobDir string) (Job, error) {
+	var s Job
+	b, err := os.ReadFile(filepath.Join(jobDir, FileName))
+	if err != nil {
+		return s, err
+	}
+	if err := json.Unmarshal(b, &s); err != nil {
+		return s, fmt.Errorf("%s: %w", filepath.Join(jobDir, FileName), err)
+	}
+	if s.Live() && !ProcessAlive(s.PID) {
+		s.State = Died
+	}
+	return s, nil
 }
 
 // Live reports whether the job says its process is still working on it.
