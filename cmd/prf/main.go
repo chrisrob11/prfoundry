@@ -79,6 +79,7 @@ func newApp(stderr io.Writer, rt job.Runtime) *cli.Command {
 				Action: a.applyCmd,
 			},
 			a.statusCmd(),
+			a.uiCmd(),
 			a.costsCmd(),
 			a.resumeCmd(),
 			a.cleanCmd(),

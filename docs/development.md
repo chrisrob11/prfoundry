@@ -23,6 +23,7 @@ and runs the job. Everything else is a package under `internal/`.
 |---|---|
 | `cmd/prf/main.go` | Commands and flags, and how `run` and `apply` build a job's options |
 | `cmd/prf/status.go`, `costs.go` | `prf status` and `prf costs` |
+| `cmd/prf/ui.go` | `prf ui` |
 | `cmd/prf/lifecycle.go` | `prf resume` and `prf clean` |
 | `cmd/prf/config.go` | `app` (the loaded home and `conf.json` every command reads), `config` and `config init` |
 | `cmd/prf/rolecmd.go`, `pipelinecmd.go` | `prf role`; `prf pipeline`, and checking a pipeline's roles |
@@ -31,8 +32,9 @@ and runs the job. Everything else is a package under `internal/`.
 | `internal/agent` | What a job needs from a coding agent: a run's command, its output's progress and result |
 | `internal/claude` | Claude Code as an agent: a `claude -p` call's arguments, reading its stream-json, and its usage-limit error |
 | `internal/opencode` | opencode as an agent: an `opencode run --format json` call's arguments and permission config, reading its JSON events (`testdata/` holds real ones), and its usage limits |
-| `internal/state` | `state.json`: writing it, finding and listing jobs, and summing their spend |
+| `internal/state` | `state.json`: writing and reading it, finding and listing jobs, and summing their spend |
 | `internal/review` | The review page the `@review` and `@ask` gates serve (`review.html`), and their saved rounds |
+| `internal/dashboard` | `prf ui`'s read-only dashboard: the server and its token (`dashboard.go`), the JSON API over the job folders (`jobs.go`), and the pages (`overview.html`, `job.html`, `style.css`) |
 | `internal/ship` | Pushing the branch and opening its PR |
 | `internal/human` | A text's first line, durations and dollars, for progress lines and tables |
 | `internal/config` | `conf.json`: its types, reading and checking it, the default home, `~` expansion |
