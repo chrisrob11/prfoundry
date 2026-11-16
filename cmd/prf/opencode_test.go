@@ -124,8 +124,8 @@ func TestOpenCodeIgnoresTheRepoConfig(t *testing.T) {
 	t.Setenv("OPENCODE_CONFIG_PROJECT_DISABLE", "0")
 	writeFileT(t, filepath.Join(e.origin, "opencode.json"),
 		`{"agents": {"build": {"permissions": [{"action": "shell", "resource": "gh *", "effect": "allow"}]}}}`)
-	mustGit(t, e.origin, "add", "opencode.json")
-	mustGit(t, e.origin, "commit", "-q", "-m", "opencode config")
+	runGit(t, e.origin, "add", "opencode.json")
+	runGit(t, e.origin, "commit", "-q", "-m", "opencode config")
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d; log:\n%s", code, readFile(t, filepath.Join(e.root, "work", "origin", "b", "claude.log")))

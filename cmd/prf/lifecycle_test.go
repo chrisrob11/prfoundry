@@ -57,7 +57,14 @@ func TestPushAndPR(t *testing.T) {
 		removeFile(t, ghLog)
 		return e.run(t, append([]string{"run", "--repo", repo, "--branch", branch, "--prompt", "x", "--role", "review"}, extra...)...)
 	}
-	onOrigin := func(branch string) bool { return mustGit(t, e.origin, "branch", "--list", branch) != "" }
+	onOrigin := func(branch string) bool {
+		t.Helper()
+		out, err := gitOut(e.origin, "branch", "--list", branch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out != ""
+	}
 
 	if code := run("app", "a"); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -141,8 +148,8 @@ func TestPushAndPR(t *testing.T) {
 
 	t.Run("a failed push means exit 4 and no PR", func(t *testing.T) {
 		checkout := filepath.Join(e.root, "nowhere")
-		mustGit(t, "", "clone", "-q", e.origin, checkout)
-		mustGit(t, checkout, "remote", "set-url", "origin", "/nonexistent/repo")
+		runGit(t, "", "clone", "-q", e.origin, checkout)
+		runGit(t, checkout, "remote", "set-url", "origin", "/nonexistent/repo")
 		removeFile(t, ghLog)
 		if code := e.run(t, "apply", "--dir", checkout, "--branch", "g", "--prompt", "x", "--pr-create", "draft"); code != job.ExitShip {
 			t.Fatalf("exit %d, want %d", code, job.ExitShip)
@@ -240,8 +247,8 @@ func TestClean(t *testing.T) {
 	}
 	clone := func(job string) string { return filepath.Join(e.root, "work", "app", job, "repo") }
 	writeFileT(t, filepath.Join(clone("unpushed"), "new.txt"), "x")
-	mustGit(t, clone("unpushed"), "add", "new.txt")
-	mustGit(t, clone("unpushed"), "commit", "-q", "-m", "local only")
+	runGit(t, clone("unpushed"), "add", "new.txt")
+	runGit(t, clone("unpushed"), "commit", "-q", "-m", "local only")
 	writeFileT(t, filepath.Join(clone("dirty"), "README.md"), "changed")
 	writeRole(t, e.roles, "review", "FAIL")
 	if code := e.run(t, "run", "--repo", "app", "--branch", "failed", "--prompt", "x", "--role", "review"); code != 1 {

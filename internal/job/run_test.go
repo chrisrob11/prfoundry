@@ -67,10 +67,13 @@ func TestOpenInput(t *testing.T) {
 
 func TestRecordRun(t *testing.T) {
 	clone := filepath.Join(t.TempDir(), "repo")
-	mustGit(t, "", "clone", "-q", newOrigin(t), clone)
+	runGit(t, "", "clone", "-q", newOrigin(t), clone)
 	j := &Job{dir: clone, jobDir: t.TempDir()}
 	j.tmp = filepath.Join(j.jobDir, "tmp")
-	head := mustGit(t, clone, "rev-parse", "HEAD")
+	head, err := gitOut(clone, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	j.lastResult = agent.Result{Text: "did it"}
 	j.recordRun(1)

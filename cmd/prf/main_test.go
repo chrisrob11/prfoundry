@@ -237,7 +237,11 @@ func TestRunWithConfigDefaults(t *testing.T) {
 			t.Errorf("%s: config claude_args then -- args not passed last: %s", role, args)
 		}
 	}
-	if got := mustGit(t, clone, "branch", "--show-current"); got != "prf/login" {
+	got, err := gitOut(clone, "branch", "--show-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "prf/login" {
 		t.Errorf("branch = %q", got)
 	}
 
@@ -379,7 +383,7 @@ func TestRunWithPipelines(t *testing.T) {
 
 	// apply only runs a pipeline when asked.
 	repo := filepath.Join(e.root, "checkout")
-	mustGit(t, "", "clone", "-q", e.origin, repo)
+	runGit(t, "", "clone", "-q", e.origin, repo)
 	removeFile(t, e.log)
 	if code := e.run(t, "apply", "--dir", repo, "--prompt", "x"); code != 0 {
 		t.Fatalf("apply: exit %d", code)
@@ -392,7 +396,7 @@ func TestRunWithPipelines(t *testing.T) {
 func TestApply(t *testing.T) {
 	e := newEnv(t, "")
 	repo := filepath.Join(e.root, "checkout")
-	mustGit(t, "", "clone", "-q", e.origin, repo)
+	runGit(t, "", "clone", "-q", e.origin, repo)
 
 	if code := e.run(t, "apply", "--dir", repo, "--branch", "feat/a", "--prompt", "just this"); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -408,7 +412,11 @@ func TestApply(t *testing.T) {
 	if !strings.HasPrefix(calls[0][1], "-p just this\n\n## Codebase context") || !strings.HasSuffix(calls[0][1], "--settings "+settings) {
 		t.Errorf("args = %q, want the prompt, then the codebase context, then --settings %s", calls[0][1], settings)
 	}
-	if got := mustGit(t, repo, "branch", "--show-current"); got != "feat/a" {
+	got, err := gitOut(repo, "branch", "--show-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "feat/a" {
 		t.Errorf("branch = %q, want feat/a", got)
 	}
 	jobDir := filepath.Join(e.root, "work", "checkout", "feat-a")
@@ -424,7 +432,7 @@ func TestMiseTrust(t *testing.T) {
 	e := newEnv(t, "")
 	t.Setenv("MISE_TRUSTED_CONFIG_PATHS", "") // miseEnv treats empty as unset
 	repo := filepath.Join(e.root, "checkout")
-	mustGit(t, "", "clone", "-q", e.origin, repo)
+	runGit(t, "", "clone", "-q", e.origin, repo)
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--role", "review"); code != 0 {
 		t.Fatalf("run: exit %d", code)
@@ -949,7 +957,7 @@ func TestRunJobEnv(t *testing.T) {
 	// apply in your own checkout writes no mise.toml and adds no write dirs,
 	// even for a repo with job_env.
 	checkout := filepath.Join(e.root, "checkout")
-	mustGit(t, "", "clone", "-q", e.origin, checkout)
+	runGit(t, "", "clone", "-q", e.origin, checkout)
 	removeFile(t, e.log)
 	if code := e.run(t, "apply", "--repo", "app", "--dir", checkout, "--prompt", "x"); code != 0 {
 		t.Fatalf("apply: exit %d", code)
