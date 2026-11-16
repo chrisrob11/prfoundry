@@ -1,0 +1,716 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prf review</title>
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --panel-2: #f0eee8; --line: #e2dfd6; --line-strong: #cfcabd;
+  --text: #1f1d1a; --muted: #6b665c; --faint: #9a9488;
+  --accent: #3b5bdb; --accent-soft: #e7ecfd; --accent-text: #ffffff;
+  --add-bg: #e9f6ec; --add-num: #d3eeda; --add-text: #1d6b33;
+  --del-bg: #fcecec; --del-num: #f6d6d6; --del-text: #a12a2a;
+  --hunk-bg: #eef1f8; --hunk-text: #5a6380;
+  --ok: #217a3c; --ok-soft: #e3f3e7; --warn: #a15c07; --warn-soft: #fbf0dc; --bad: #b42318; --bad-soft: #fdecea;
+  --comment-bg: #fffdf5; --comment-line: #eadfb8; --reply-bg: #f3f6ff; --reply-line: #d4dcf7;
+  --shadow: 0 1px 2px rgba(31,29,26,.06), 0 4px 16px rgba(31,29,26,.06);
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15161a; --panel: #1c1d22; --panel-2: #23252b; --line: #2e3038; --line-strong: #3b3e48;
+    --text: #e8e6e1; --muted: #a29e95; --faint: #6f6c66;
+    --accent: #7c95ff; --accent-soft: #252c48; --accent-text: #0f1120;
+    --add-bg: #15291c; --add-num: #1b3523; --add-text: #7fd396;
+    --del-bg: #2e1819; --del-num: #3a1d1f; --del-text: #f19a9a;
+    --hunk-bg: #1f2333; --hunk-text: #97a0c2;
+    --ok: #6fd28c; --ok-soft: #173020; --warn: #e8b45d; --warn-soft: #33270f; --bad: #ff8a80; --bad-soft: #3a1a18;
+    --comment-bg: #26241b; --comment-line: #463f26; --reply-bg: #1e2336; --reply-line: #323b5c;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+button, textarea, input { font: inherit; color: inherit; }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+a { color: var(--accent); }
+
+header.top {
+  position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
+}
+.top-inner { max-width: 1480px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.brand { font-weight: 650; letter-spacing: -.01em; display: flex; align-items: center; gap: 8px; }
+.brand .mark { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; font: 700 12px var(--mono); }
+.crumbs { color: var(--muted); display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; }
+.crumbs b { color: var(--text); font-weight: 600; }
+.crumbs .branch { font-family: var(--mono); font-size: 12.5px; background: var(--panel-2); border: 1px solid var(--line); padding: 1px 8px; border-radius: 999px; color: var(--text); }
+.spacer { flex: 1; }
+.pill { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
+.pill.round { background: var(--panel-2); border-color: var(--line); color: var(--muted); }
+.pill.waiting { background: var(--accent-soft); color: var(--accent); }
+.pill.fixing, .pill.submitted { background: var(--warn-soft); color: var(--warn); }
+.pill.approved { background: var(--ok-soft); color: var(--ok); }
+.pill.stopped, .pill.gone { background: var(--bad-soft); color: var(--bad); }
+
+.banner { max-width: 1480px; margin: 16px auto 0; padding: 0 20px; }
+.banner > div { border-radius: 10px; padding: 12px 16px; display: flex; gap: 12px; align-items: center; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); }
+.banner .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.banner.fixing .dot, .banner.submitted .dot { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+.banner.approved .dot { background: var(--ok); }
+.banner.stopped .dot, .banner.gone .dot { background: var(--bad); }
+.banner .sub { color: var(--muted); font-size: 13px; font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
+
+main { max-width: 1480px; margin: 0 auto; padding: 16px 20px 320px; display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } aside { position: static !important; max-height: none !important; } }
+
+aside { position: sticky; top: 64px; max-height: calc(100vh - 80px); overflow: auto; display: flex; flex-direction: column; gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.card h3 { margin: 0; padding: 10px 14px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+.filelist { list-style: none; margin: 0; padding: 6px; }
+.filelist li a { display: flex; gap: 8px; align-items: center; padding: 5px 8px; border-radius: 6px; text-decoration: none; color: var(--text); font-family: var(--mono); font-size: 12px; }
+.filelist li a:hover { background: var(--panel-2); }
+.filelist .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.filelist .cnt { font-size: 11px; white-space: nowrap; }
+.filelist .badge { font-size: 10px; background: var(--comment-line); color: var(--text); border-radius: 999px; padding: 0 6px; }
+.add { color: var(--add-text); } .del { color: var(--del-text); }
+.commits { list-style: none; margin: 0; padding: 8px 14px 12px; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.commits code { color: var(--accent); margin-right: 6px; }
+
+.section { margin-bottom: 16px; }
+details.card > summary { cursor: pointer; padding: 10px 14px; list-style: none; display: flex; gap: 8px; align-items: center; font-weight: 600; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::before { content: "▸"; color: var(--faint); transition: transform .15s; }
+details.card[open] > summary::before { transform: rotate(90deg); }
+details.card > summary .meta { color: var(--muted); font-weight: 400; font-size: 13px; }
+.prose { padding: 4px 18px 16px; white-space: pre-wrap; font-size: 13.5px; max-height: 420px; overflow: auto; }
+
+.rv-round { border-top: 1px solid var(--line); padding: 14px 18px; }
+.round-head { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.round-head .when { color: var(--faint); font-size: 12px; }
+.thread { border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; overflow: hidden; }
+.thread .where { font-family: var(--mono); font-size: 12px; padding: 6px 10px; background: var(--panel-2); border-bottom: 1px solid var(--line); color: var(--muted); }
+.thread pre { margin: 0; padding: 6px 10px; font: 12px/1.45 var(--mono); background: var(--panel-2); border-bottom: 1px solid var(--line); overflow: auto; }
+.msg { padding: 8px 12px; white-space: pre-wrap; }
+.msg .who { font-size: 11.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); display: block; margin-bottom: 2px; }
+.msg.human { background: var(--comment-bg); }
+.msg.claude { background: var(--reply-bg); border-top: 1px solid var(--reply-line); }
+.msg.claude .who { color: var(--accent); }
+.msg.none { color: var(--faint); font-style: italic; }
+
+.toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.seg button { border: 0; background: transparent; padding: 5px 12px; border-radius: 6px; cursor: pointer; color: var(--muted); font-size: 13px; font-weight: 550; }
+.seg button.on { background: var(--panel); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.seg button:disabled { opacity: .45; cursor: default; }
+.toolbar .stat { color: var(--muted); font-size: 13px; }
+.linkbtn { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 0; font-size: 13px; }
+.warnline { background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: 8px 12px; font-size: 13px; margin-bottom: 12px; }
+
+.file { margin-bottom: 14px; overflow: clip; scroll-margin-top: 72px; }
+.file-head { display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: var(--panel-2); border-bottom: 1px solid var(--line); position: sticky; top: 57px; z-index: 5; }
+.file.collapsed .file-head { border-bottom: 0; }
+.file-head .toggle { border: 0; background: none; cursor: pointer; color: var(--faint); width: 18px; padding: 0; }
+.file-head .path { font-family: var(--mono); font-size: 12.5px; font-weight: 600; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.file-head .path .from { color: var(--muted); font-weight: 400; }
+.file-head .kind { font-size: 11px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; }
+.btn { border: 1px solid var(--line-strong); background: var(--panel); border-radius: 7px; padding: 5px 12px; cursor: pointer; font-size: 13px; font-weight: 550; }
+.btn:hover { background: var(--panel-2); }
+.btn.small { padding: 2px 9px; font-size: 12px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.primary:hover { filter: brightness(1.06); background: var(--accent); }
+.btn.approve { background: var(--ok); border-color: var(--ok); color: #fff; }
+.btn.changes { background: var(--warn); border-color: var(--warn); color: #fff; }
+.btn:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+.file.collapsed .diff { display: none; }
+
+table.diff { width: 100%; border-collapse: collapse; font: 12.5px/1.55 var(--mono); table-layout: fixed; }
+table.diff col.num { width: 52px; } table.diff col.sign { width: 18px; }
+table.diff td { padding: 0; vertical-align: top; }
+td.num { color: var(--faint); text-align: right; padding: 0 8px 0 4px !important; user-select: none; position: relative; font-size: 11.5px; }
+td.code { white-space: pre-wrap; word-break: break-word; padding-right: 12px !important; }
+td.sign { user-select: none; color: var(--faint); text-align: center; }
+tr.ins td { background: var(--add-bg); } tr.ins td.num { background: var(--add-num); } tr.ins td.sign { color: var(--add-text); }
+tr.rem td { background: var(--del-bg); } tr.rem td.num { background: var(--del-num); } tr.rem td.sign { color: var(--del-text); }
+tr.hunk td { background: var(--hunk-bg); color: var(--hunk-text); padding: 4px 12px !important; font-size: 12px; }
+tr.line:hover td.code { box-shadow: inset 2px 0 0 var(--accent); }
+.plus { position: absolute; left: -2px; top: 1px; width: 18px; height: 18px; border-radius: 5px; border: 0; background: var(--accent); color: var(--accent-text); font: 700 13px/18px var(--sans); cursor: pointer; opacity: 0; transform: scale(.85); transition: opacity .1s, transform .1s; padding: 0; }
+tr.line:hover .plus, .plus:focus { opacity: 1; transform: scale(1); }
+tr.inline td { padding: 8px 12px 8px 122px !important; background: var(--panel); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); font-family: var(--sans); font-size: 14px; }
+.binary { padding: 12px 16px; color: var(--muted); font-style: italic; }
+
+.cbox { border: 1px solid var(--comment-line); background: var(--comment-bg); border-radius: 8px; padding: 10px 12px; margin: 4px 0; max-width: 760px; }
+.cbox .body { white-space: pre-wrap; }
+.cbox .acts { display: flex; gap: 10px; margin-top: 6px; }
+.cbox .tag { font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; color: var(--warn); }
+textarea { width: 100%; min-height: 76px; resize: vertical; border: 1px solid var(--line-strong); background: var(--panel); border-radius: 8px; padding: 8px 10px; line-height: 1.45; }
+textarea:focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); border-color: var(--accent); }
+.form-acts { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; align-items: center; }
+.form-acts .hint { color: var(--faint); font-size: 12px; margin-right: auto; }
+
+.dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; pointer-events: none; }
+.dock-inner { max-width: 1480px; margin: 0 auto; padding: 0 20px 16px; display: flex; justify-content: flex-end; }
+.review-box { pointer-events: auto; width: min(560px, 100%); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.18); overflow: hidden; }
+.review-box .rb-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; user-select: none; }
+.review-box .rb-head .t { font-weight: 650; flex: 1; }
+.review-box .rb-head .count { color: var(--muted); font-size: 13px; }
+.review-box .rb-body { padding: 0 14px 14px; border-top: 1px solid var(--line); }
+.review-box.closed .rb-body { display: none; }
+.verdicts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0; }
+.verdicts label { border: 1px solid var(--line-strong); border-radius: 8px; padding: 8px 10px; cursor: pointer; display: flex; gap: 8px; align-items: flex-start; }
+.verdicts label small { display: block; color: var(--muted); font-size: 12px; }
+.verdicts input { margin-top: 3px; accent-color: var(--accent); }
+.verdicts label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.err { color: var(--bad); font-size: 13px; margin-right: auto; }
+
+.qcard { overflow: hidden; }
+.qhead { display: flex; gap: 10px; align-items: baseline; padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--accent-soft); flex-wrap: wrap; }
+.qhead .meta { color: var(--muted); font-size: 12.5px; }
+.qdoc { padding: 8px 18px 14px 34px; font-size: 14.5px; line-height: 1.6; }
+.qblock { position: relative; border-radius: 6px; padding: 1px 6px; margin: 0 -6px; }
+.qblock:hover { background: var(--panel-2); }
+.qblock .plus { left: -26px; top: 6px; }
+.qblock:hover .plus { opacity: 1; transform: scale(1); }
+.qblock .qh { margin: 14px 0 4px; line-height: 1.3; font-weight: 650; }
+.qblock .qh1 { font-size: 19px; } .qblock .qh2 { font-size: 16px; } .qblock .qh3 { font-size: 14.5px; }
+.qblock p { margin: 6px 0; white-space: pre-wrap; }
+.qblock .li { display: flex; gap: 8px; margin: 3px 0; }
+.qblock .li .marker { color: var(--muted); flex: none; min-width: 1.2em; }
+.qblock pre { margin: 6px 0; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; font: 12.5px/1.5 var(--mono); overflow: auto; }
+.qblock blockquote { margin: 6px 0; padding: 0 12px; border-left: 3px solid var(--line-strong); color: var(--muted); white-space: pre-wrap; }
+.qblock code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.qcomments { margin: 4px 0 10px; }
+a.ref { text-decoration: none; border-bottom: 1px dashed var(--accent); }
+tr.flash td { animation: flash 2.4s ease-out; }
+@keyframes flash { 0%, 40% { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); } }
+.viewer { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.35); display: grid; place-items: center; padding: 24px; }
+.viewer .card { width: min(1100px, 100%); max-height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.viewer .vhead { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.viewer .vhead .path { font-family: var(--mono); font-size: 12.5px; font-weight: 600; flex: 1; overflow-wrap: anywhere; }
+.viewer .vbody { overflow: auto; }
+.viewer tr.target td { background: var(--accent-soft); }
+.empty { padding: 40px; text-align: center; color: var(--muted); }
+.toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 999px; font-size: 13px; font-weight: 550; z-index: 50; box-shadow: var(--shadow); transition: opacity .3s; }
+kbd { font: 11px var(--mono); border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<header class="top"><div class="top-inner">
+  <div class="brand"><span class="mark">t</span><span id="brandText">prf review</span></div>
+  <div class="crumbs" id="crumbs"></div>
+  <div class="spacer"></div>
+  <span class="pill round" id="roundPill"></span>
+  <span class="pill" id="statePill"></span>
+</div></header>
+<div id="banner"></div>
+<main>
+  <aside>
+    <div class="card"><h3><span>Files</span><span id="fileCount"></span></h3><ul class="filelist" id="files"></ul></div>
+    <div class="card"><h3><span>Commits</span><span id="commitCount"></span></h3><ul class="commits" id="commits"></ul></div>
+  </aside>
+  <section>
+    <div id="context"></div>
+    <div class="toolbar">
+      <div class="seg" id="scope">
+        <button data-scope="all" class="on">All changes</button>
+        <button data-scope="since">Since last review</button>
+      </div>
+      <span class="stat" id="stat"></span>
+      <div class="spacer" style="flex:1"></div>
+      <button class="linkbtn" id="collapseAll">Collapse all</button>
+    </div>
+    <div id="dirty"></div>
+    <div id="diff"></div>
+  </section>
+</main>
+<div class="dock"><div class="dock-inner"><div class="review-box" id="reviewBox"></div></div></div>
+
+<script>
+"use strict";
+const api = (p) => new URL("api/" + p, location.href);
+let view = null, approved = false, version = -1, scope = "all", pending = [], boxOpen = true, verdict = "changes", summary = "", submitting = false, lastState = "";
+
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat(Infinity)) if (c != null && c !== false) n.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return n;
+}
+const $ = (id) => document.getElementById(id);
+
+// Pending comments survive a reload, per round.
+const draftKey = () => view ? `prf-${view.kind || "review"}:${view.repo}/${view.job}:${view.round}` : "";
+const asking = () => view && view.kind === "ask";
+function saveDraft() { try { localStorage.setItem(draftKey(), JSON.stringify({ pending, summary, verdict })); } catch (e) {} }
+function loadDraft() {
+  pending = []; summary = ""; verdict = "changes";
+  try { const d = JSON.parse(localStorage.getItem(draftKey()) || "null"); if (d) ({ pending = [], summary = "", verdict = "changes" } = d); } catch (e) {}
+}
+function clearDraft() { try { localStorage.removeItem(draftKey()); } catch (e) {} }
+
+function parseDiff(text) {
+  const files = []; let f = null, h = null, o = 0, n = 0;
+  for (const raw of (text || "").split("\n")) {
+    if (raw.startsWith("diff --git ")) {
+      const m = raw.match(/^diff --git a\/(.*) b\/(.*)$/);
+      f = { from: m ? m[1] : "", path: m ? m[2] : raw.slice(11), hunks: [], add: 0, del: 0, kind: "", binary: false };
+      files.push(f); h = null; continue;
+    }
+    if (!f) continue;
+    if (!h) {
+      if (raw.startsWith("new file")) f.kind = "added";
+      else if (raw.startsWith("deleted file")) f.kind = "deleted";
+      else if (raw.startsWith("rename from ")) { f.kind = "renamed"; f.from = raw.slice(12); }
+      else if (raw.startsWith("rename to ")) f.path = raw.slice(10);
+      else if (raw.startsWith("Binary files")) f.binary = true;
+      else if (raw.startsWith("+++ ") && raw !== "+++ /dev/null") f.path = raw.slice(6);
+    }
+    if (raw.startsWith("@@")) {
+      const m = raw.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
+      o = m ? +m[1] : 0; n = m ? +m[2] : 0;
+      h = { header: raw, lines: [] }; f.hunks.push(h); continue;
+    }
+    if (!h) continue;
+    const c = raw[0], body = raw.slice(1);
+    if (c === "+") { h.lines.push({ t: "ins", n: n++, text: body, raw }); f.add++; }
+    else if (c === "-") { h.lines.push({ t: "rem", o: o++, text: body, raw }); f.del++; }
+    else if (c === " ") { h.lines.push({ t: "ctx", o: o++, n: n++, text: body, raw }); }
+    else if (c === "\\") { h.lines.push({ t: "note", text: raw }); }
+  }
+  return files;
+}
+
+function anchorOf(l) { return l.t === "rem" ? { side: "old", line: l.o } : { side: "new", line: l.n }; }
+function snippet(hunk, idx) {
+  const lines = []; for (let i = Math.max(0, idx - 4); i <= idx; i++) if (hunk.lines[i].t !== "note") lines.push(hunk.lines[i].raw);
+  return lines.join("\n");
+}
+const sameSpot = (c, path, a) => c.path === path && c.line === a.line && c.side === a.side;
+
+function commentBox(c) {
+  return el("div", { class: "cbox" },
+    el("div", { class: "tag", text: "Pending" }),
+    el("div", { class: "body", text: c.body }),
+    view.state === "waiting" && el("div", { class: "acts" },
+      el("button", { class: "linkbtn", text: "Edit", onclick: () => { c.editing = true; render(); } }),
+      el("button", { class: "linkbtn", text: "Delete", onclick: () => { pending = pending.filter(p => p !== c); saveDraft(); render(); } })));
+}
+
+function commentForm(c, onDone) {
+  const ta = el("textarea", { placeholder: asking() ? "Your answer to this…" : "Leave a comment… what should change, or a question for Claude" });
+  ta.value = c.body || "";
+  const save = () => {
+    const body = ta.value.trim();
+    if (!body) { ta.focus(); return; }
+    c.body = body; delete c.editing;
+    if (!pending.includes(c)) pending.push(c);
+    saveDraft(); onDone(); render();
+  };
+  ta.addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+    if (e.key === "Escape") { delete c.editing; onDone(); render(); }
+  });
+  setTimeout(() => ta.focus(), 0);
+  return el("div", {}, ta, el("div", { class: "form-acts" },
+    el("span", { class: "hint" }, el("kbd", { text: "⌘" }), " ", el("kbd", { text: "Enter" }), " to add · ", el("kbd", { text: "Esc" }), " to cancel"),
+    el("button", { class: "btn", text: "Cancel", onclick: () => { delete c.editing; onDone(); render(); } }),
+    el("button", { class: "btn primary", text: pending.includes(c) ? "Update comment" : "Add comment", onclick: save })));
+}
+
+let openForm = null; // {path, side, line}
+const collapsed = new Set();
+
+const fileId = (path) => "f-" + path.replace(/[^\w]/g, "_");
+const rowId = (path, n) => fileId(path) + "-L" + n;
+
+function renderFile(f, root) {
+  const id = fileId(f.path);
+  const fileComments = pending.filter(c => c.path === f.path && !c.line);
+  const card = el("div", { class: "card file" + (collapsed.has(f.path) ? " collapsed" : ""), id });
+  const canComment = view.state === "waiting";
+  card.append(el("div", { class: "file-head" },
+    el("button", { class: "toggle", text: collapsed.has(f.path) ? "▸" : "▾", title: "Collapse",
+      onclick: () => { collapsed.has(f.path) ? collapsed.delete(f.path) : collapsed.add(f.path); render(); } }),
+    el("span", { class: "path" }, f.kind === "renamed" && el("span", { class: "from", text: f.from + " → " }), f.path),
+    f.kind && el("span", { class: "kind", text: f.kind }),
+    el("span", { class: "cnt mono" }, el("span", { class: "add", text: "+" + f.add }), " ", el("span", { class: "del", text: "−" + f.del })),
+    canComment && el("button", { class: "btn small", text: "Comment on file", onclick: () => { openForm = { path: f.path, side: "", line: 0 }; render(); } })));
+
+  if (openForm && openForm.path === f.path && !openForm.line) {
+    const c = { path: f.path, line: 0, side: "", body: "" };
+    card.append(el("div", { style: "padding:10px 12px;border-bottom:1px solid var(--line)" }, commentForm(c, () => openForm = null)));
+  }
+  for (const c of fileComments) card.append(el("div", { style: "padding:6px 12px;border-bottom:1px solid var(--line)" }, c.editing ? commentForm(c, () => {}) : commentBox(c)));
+
+  if (f.binary) { card.append(el("div", { class: "binary", text: "Binary file changed" })); root.append(card); return; }
+  if (!f.hunks.length) { card.append(el("div", { class: "binary", text: f.kind === "renamed" ? "Renamed without changes" : "No textual changes" })); root.append(card); return; }
+
+  const table = el("table", { class: "diff" }, el("colgroup", {}, el("col", { class: "num" }), el("col", { class: "num" }), el("col", { class: "sign" }), el("col", {})));
+  const tb = el("tbody");
+  for (const h of f.hunks) {
+    tb.append(el("tr", { class: "hunk" }, el("td", { colspan: 4, text: h.header })));
+    h.lines.forEach((l, idx) => {
+      if (l.t === "note") { tb.append(el("tr", { class: "hunk" }, el("td", { colspan: 4, text: l.text }))); return; }
+      const a = anchorOf(l);
+      const plus = canComment && el("button", { class: "plus", text: "+", title: "Comment on this line",
+        onclick: () => { openForm = { path: f.path, ...a, code: snippet(h, idx) }; render(); } });
+      tb.append(el("tr", { class: "line " + l.t, id: l.n != null ? rowId(f.path, l.n) : null },
+        el("td", { class: "num" }, plus, l.o != null ? String(l.o) : ""),
+        el("td", { class: "num", text: l.n != null ? String(l.n) : "" }),
+        el("td", { class: "sign", text: l.t === "ins" ? "+" : l.t === "rem" ? "−" : "" }),
+        el("td", { class: "code", text: l.text || " " })));
+      const here = pending.filter(c => sameSpot(c, f.path, a));
+      const formHere = openForm && sameSpot(openForm, f.path, a);
+      if (here.length || formHere) {
+        const cell = el("td", { colspan: 4 });
+        for (const c of here) cell.append(c.editing ? commentForm(c, () => {}) : commentBox(c));
+        if (formHere) cell.append(commentForm({ path: f.path, ...a, code: openForm.code, body: "" }, () => openForm = null));
+        tb.append(el("tr", { class: "inline" }, cell));
+      }
+    });
+  }
+  table.append(tb); card.append(table); root.append(card);
+}
+
+// The question, as markdown: headings, paragraphs, list items, quotes and
+// code blocks, each a block you can answer. file:line references link to
+// that line in the diff, or to the file at HEAD.
+function mdBlocks(text) {
+  const lines = (text || "").replace(/\r/g, "").split("\n"), blocks = [];
+  const fence = /^\s*(```|~~~)/, heading = /^(#{1,6})\s+(.*)$/, item = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/, quote = /^\s*>\s?/, rule = /^\s*([-*_])(\s*\1){2,}\s*$/;
+  const starts = (l) => fence.test(l) || heading.test(l) || item.test(l) || quote.test(l) || rule.test(l);
+  let i = 0, m;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (!l.trim() || rule.test(l)) { i++; continue; }
+    if (fence.test(l)) {
+      const mark = l.trim().slice(0, 3), body = [];
+      for (i++; i < lines.length && !lines[i].trim().startsWith(mark); i++) body.push(lines[i]);
+      i++; blocks.push({ t: "code", text: body.join("\n") }); continue;
+    }
+    if ((m = l.match(heading))) { blocks.push({ t: "h", level: m[1].length, text: m[2] }); i++; continue; }
+    if ((m = l.match(item))) {
+      const text = [m[3]];
+      for (i++; i < lines.length && lines[i].trim() && !starts(lines[i]); i++) text.push(lines[i].trim());
+      blocks.push({ t: "li", marker: /\d/.test(m[2]) ? m[2] : "•", depth: Math.min(m[1].length, 12), text: text.join("\n") }); continue;
+    }
+    if (quote.test(l)) {
+      const text = [];
+      for (; i < lines.length && quote.test(lines[i]); i++) text.push(lines[i].replace(quote, ""));
+      blocks.push({ t: "quote", text: text.join("\n") }); continue;
+    }
+    const text = [l];
+    for (i++; i < lines.length && lines[i].trim() && !starts(lines[i]); i++) text.push(lines[i]);
+    blocks.push({ t: "p", text: text.join("\n") });
+  }
+  return blocks;
+}
+
+const refPattern = /((?:[\w.@-]+\/)*[\w@-][\w.@-]*\.[A-Za-z][\w]*):(\d+)(?:[-–](\d+))?/g;
+function withRefs(text) {
+  const out = []; let at = 0;
+  for (const m of text.matchAll(refPattern)) {
+    if (text.slice(Math.max(0, m.index - 2), m.index).endsWith("/")) continue; // a URL
+    out.push(text.slice(at, m.index));
+    out.push(el("a", { href: "#", class: "ref", title: "Show " + m[1] + " line " + m[2], onclick: (e) => { e.preventDefault(); jumpTo(m[1], +m[2]); } }, m[0]));
+    at = m.index + m[0].length;
+  }
+  out.push(text.slice(at));
+  return out;
+}
+function inline(text) {
+  return text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/).map((part, i) => {
+    if (i % 2 === 0) return withRefs(part);
+    if (part[0] === "`") return el("code", {}, withRefs(part.slice(1, -1)));
+    return el("b", {}, withRefs(part.slice(2, -2)));
+  });
+}
+function renderBlock(b) {
+  switch (b.t) {
+    case "h": return el("div", { class: "qh qh" + Math.min(b.level, 3), role: "heading", "aria-level": b.level + 1 }, inline(b.text));
+    case "li": return el("div", { class: "li", style: `margin-left:${b.depth * 8}px` }, el("span", { class: "marker", text: b.marker }), el("span", {}, inline(b.text)));
+    case "code": return el("pre", {}, withRefs(b.text));
+    case "quote": return el("blockquote", {}, inline(b.text));
+    default: return el("p", {}, inline(b.text));
+  }
+}
+
+function renderQuestion(root) {
+  const card = el("div", { class: "card section qcard" },
+    el("div", { class: "qhead" }, el("b", { text: `${view.asker} has a question` }), el("span", { class: "meta mono", text: view.question_file })));
+  const doc = el("div", { class: "qdoc" });
+  const canComment = view.state === "waiting";
+  mdBlocks(view.question).forEach((b, i) => {
+    const id = i + 1;
+    doc.append(el("div", { class: "qblock" },
+      canComment && el("button", { class: "plus", text: "+", title: "Answer this", onclick: () => { openForm = { block: id }; render(); } }),
+      renderBlock(b)));
+    const here = pending.filter(c => c.block === id), formHere = openForm && openForm.block === id;
+    if (!here.length && !formHere) return;
+    const box = el("div", { class: "qcomments" });
+    for (const c of here) box.append(c.editing ? commentForm(c, () => {}) : commentBox(c));
+    if (formHere) box.append(commentForm({ block: id, code: b.text.slice(0, 800), body: "" }, () => openForm = null));
+    doc.append(box);
+  });
+  card.append(doc); root.append(card);
+}
+
+// jumpTo shows path's line: in the diff if it's there, else in the file at HEAD.
+function jumpTo(path, line) {
+  const same = (p) => p === path || p.endsWith("/" + path);
+  const f = parseDiff(view.diff).find(f => same(f.path));
+  if (f && f.hunks.some(h => h.lines.some(l => l.n === line))) {
+    scope = "all"; collapsed.delete(f.path); render();
+    const row = document.getElementById(rowId(f.path, line));
+    if (row) { row.scrollIntoView({ block: "center", behavior: "smooth" }); row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash"); }
+    return;
+  }
+  showFile(f ? f.path : path, line);
+}
+
+async function showFile(path, line) {
+  document.querySelectorAll(".viewer").forEach(v => v.remove());
+  const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const body = el("div", { class: "vbody" }, el("div", { class: "empty", text: "Loading…" }));
+  const overlay = el("div", { class: "viewer", onclick: (e) => { if (e.target === overlay) close(); } },
+    el("div", { class: "card" },
+      el("div", { class: "vhead" }, el("span", { class: "path", text: `${path}:${line}` }), el("span", { class: "meta", text: "at HEAD" }),
+        el("button", { class: "btn small", text: "Close", onclick: close })),
+      body));
+  document.body.append(overlay); document.addEventListener("keydown", onKey);
+  try {
+    const res = await fetch(api("file?path=" + encodeURIComponent(path)), { cache: "no-store" });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    const tb = el("tbody");
+    out.text.replace(/\n$/, "").split("\n").forEach((text, i) => tb.append(el("tr", { class: "line" + (i + 1 === line ? " target" : "") },
+      el("td", { class: "num", text: String(i + 1) }), el("td", { class: "code", text: text || " " }))));
+    body.replaceChildren(el("table", { class: "diff" }, el("colgroup", {}, el("col", { class: "num" }), el("col", {})), tb));
+    const target = tb.children[line - 1];
+    if (target) target.scrollIntoView({ block: "center" });
+  } catch (e) {
+    body.replaceChildren(el("div", { class: "empty", text: e.message }));
+  }
+}
+
+function renderRounds() {
+  const root = $("context"); root.replaceChildren();
+  if (asking() && view.question && view.state !== "approved") renderQuestion(root);
+  if (view.spec || view.task) {
+    root.append(el("details", { class: "card section" },
+      el("summary", {}, view.spec ? "PR spec" : "Task", el("span", { class: "meta", text: view.spec && view.task ? "and task" : "" })),
+      el("div", { class: "prose", text: [view.spec, view.task && "Task: " + view.task].filter(Boolean).join("\n\n") })));
+  }
+  if (!view.rounds.length) return;
+  const noun = asking() ? "question" : "review";
+  const d = el("details", { class: "card section", open: !asking() },
+    el("summary", {}, asking() ? "Earlier questions" : "Earlier rounds", el("span", { class: "meta", text: `${view.rounds.length} ${noun}${view.rounds.length > 1 ? "s" : ""}` })));
+  const verdicts = { approve: ["approved", "Approved"], changes: ["fixing", "Changes requested"], answer: ["approved", "Answered"], accept: ["approved", "Accepted recommendations"], stop: ["stopped", "Stopped the job"] };
+  for (const r of view.rounds.slice().reverse()) {
+    const box = el("div", { class: "rv-round" },
+      el("div", { class: "round-head" },
+        el("b", { text: (asking() ? "Question " : "Round ") + r.round }),
+        el("span", { class: "pill " + (verdicts[r.verdict] || [""])[0], text: (verdicts[r.verdict] || ["", r.verdict])[1] }),
+        el("span", { class: "when", text: new Date(r.submitted).toLocaleString() + " · " + (r.commit || "").slice(0, 8) })));
+    if (r.question) box.append(el("details", {}, el("summary", { style: "cursor:pointer;color:var(--muted);font-size:13px", text: "The question" }),
+      el("div", { class: "thread" }, el("div", { class: "msg", text: r.question }))));
+    if (r.body) box.append(el("div", { class: "thread" }, el("div", { class: "msg human" }, el("span", { class: "who", text: "You" }), r.body)));
+    for (const c of r.comments || []) {
+      box.append(el("div", { class: "thread" },
+        el("div", { class: "where", text: `#${c.id}  ${c.block ? "on the question" : c.path ? c.path + (c.line ? ":" + c.line : "") : "general"}` }),
+        c.code && el("pre", { text: c.code }),
+        el("div", { class: "msg human" }, el("span", { class: "who", text: "You" }), c.body),
+        c.reply ? el("div", { class: "msg claude" }, el("span", { class: "who", text: "Claude" }), c.reply)
+          : r.fixed && el("div", { class: "msg claude none", text: "No direct reply; see Claude's summary." })));
+    }
+    if (r.summary) box.append(el("details", {}, el("summary", { style: "cursor:pointer;color:var(--muted);font-size:13px", text: "Claude's summary" }),
+      el("div", { class: "thread" }, el("div", { class: "msg claude", text: r.summary }))));
+    d.append(box);
+  }
+  root.append(d);
+}
+
+function renderBox() {
+  const box = $("reviewBox"); box.className = "review-box" + (boxOpen ? "" : " closed"); box.replaceChildren();
+  if (view.state !== "waiting") { box.style.display = "none"; return; }
+  box.style.display = "";
+  const n = pending.length;
+  box.append(el("div", { class: "rb-head", onclick: () => { boxOpen = !boxOpen; renderBox(); } },
+    el("span", { class: "t", text: asking() ? "Answer the question" : "Finish your review" }),
+    el("span", { class: "count", text: n ? `${n} pending comment${n > 1 ? "s" : ""}` : "no comments yet" }),
+    el("span", { class: "count", text: boxOpen ? "▾" : "▴" })));
+  const ta = el("textarea", { placeholder: asking() ? "Your answer. Comments on the question and the diff go with it." : "Overall feedback (optional when approving)", oninput: e => { summary = e.target.value; saveDraft(); updateSubmit(); } });
+  ta.value = summary;
+  if (asking()) {
+    const stop = () => { if (confirm("Stop the job here? No further steps run, and prf exits with code 8.")) submit("stop"); };
+    box.append(el("div", { class: "rb-body" },
+      el("p", { style: "color:var(--muted);font-size:13px;margin:10px 0", text: `Claude records your answers, then ${view.asker} runs again with them.` }),
+      ta, el("div", { class: "form-acts" }, el("span", { class: "err", id: "submitErr" }),
+        el("button", { class: "btn", id: "stopBtn", text: "Stop job", onclick: stop }),
+        el("button", { class: "btn", id: "acceptBtn", text: "Accept recommendations", title: "Take the option marked Recommended for every question" + (n || summary.trim() ? ", plus what you wrote" : ""), onclick: () => submit("accept") }),
+        el("button", { class: "btn primary", id: "submitBtn", text: "Answer", onclick: () => submit("answer") }))));
+    updateSubmit();
+    return;
+  }
+  const radio = (val, title, sub) => el("label", {},
+    el("input", { type: "radio", name: "verdict", value: val, checked: verdict === val, onchange: () => { verdict = val; saveDraft(); updateSubmit(); } }),
+    el("span", {}, title, el("small", { text: sub })));
+  const err = el("span", { class: "err", id: "submitErr" });
+  const btn = el("button", { class: "btn", id: "submitBtn", onclick: submit });
+  box.append(el("div", { class: "rb-body" }, el("div", { class: "verdicts" },
+    radio("changes", "Request changes", "Claude addresses your comments, then you review again"),
+    radio("approve", "Approve", n ? "LGTM: pending comments are dropped" : "LGTM: the pipeline carries on")),
+    ta, el("div", { class: "form-acts" }, err, btn)));
+  updateSubmit();
+}
+
+function updateSubmit() {
+  const btn = $("submitBtn"); if (!btn) return;
+  if (asking()) {
+    for (const id of ["stopBtn", "acceptBtn"]) $(id).disabled = submitting;
+    btn.textContent = submitting ? "Sending…" : "Answer";
+    btn.disabled = submitting || (!pending.length && !summary.trim());
+    btn.title = btn.disabled && !submitting ? "Write an answer or comment on the question first" : "";
+    return;
+  }
+  const changes = verdict === "changes";
+  btn.className = "btn " + (changes ? "changes" : "approve");
+  btn.textContent = submitting ? "Submitting…" : changes ? "Request changes" : "Approve";
+  btn.disabled = submitting || (changes && !pending.length && !summary.trim());
+  btn.title = btn.disabled && !submitting ? "Add a comment or overall feedback first" : "";
+}
+
+async function submit(v) {
+  v = typeof v === "string" ? v : verdict;
+  submitting = true; updateSubmit();
+  const comments = v === "approve" || v === "stop" ? [] : pending.map(({ path, line, side, code, block, body }) => ({ path, line, side, code, block, body }));
+  try {
+    const res = await fetch(api("submit"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ verdict: v, body: v === "stop" ? "" : summary, comments }) });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    clearDraft(); pending = []; summary = "";
+    approved = v === "approve";
+    toast({ approve: "Approved", accept: "Accepted the recommendations", stop: "Stopping the job" }[v] || "Sent to Claude");
+    await poll(true);
+  } catch (e) {
+    const err = $("submitErr"); if (err) err.textContent = e.message;
+  } finally { submitting = false; updateSubmit(); }
+}
+
+function renderBanner(activity) {
+  const b = $("banner"); b.replaceChildren();
+  const s = view ? view.state : "gone";
+  const msg = asking() ? {
+    submitted: ["Answers sent", "prf is picking them up…"],
+    fixing: ["Claude is recording your answers", activity || "starting…"],
+    rerunning: [`${view.asker} is running again with your answers`, activity || "starting…"],
+    approved: ["No more questions", `${view.asker} finished without asking again, and the pipeline is carrying on. You can close this tab.`],
+    stopped: ["The question gate stopped", "You stopped the job, the step kept asking past max_rounds, or a step failed. prf status shows why; prf resume carries on."],
+    gone: ["prf is no longer serving this page", "The job moved on or was stopped. You can close this tab."],
+  }[s] : {
+    submitted: ["Review submitted", "prf is picking it up…"],
+    fixing: [`Claude is addressing round ${view && view.round}`, activity || "starting…"],
+    approved: ["Approved", "The gate passed and the pipeline is carrying on. You can close this tab."],
+    stopped: ["The review gate stopped", "Rounds or budget ran out, or the fix role failed. prf status shows why; prf resume carries on."],
+    gone: ["prf is no longer serving this review", "The job moved on or was stopped. You can close this tab."],
+  }[s];
+  if (!msg) return;
+  b.className = "banner " + (s === "rerunning" ? "fixing" : s);
+  b.append(el("div", {}, el("span", { class: "dot" }), el("b", { text: msg[0] }), el("span", { class: "sub", text: msg[1] })));
+}
+
+function render() {
+  if (!view) return;
+  document.title = `${view.state === "waiting" ? "● " : ""}${asking() ? "Question from " + view.asker : "Review " + view.branch} · ${asking() ? view.branch : "round " + view.round}`;
+  $("brandText").textContent = asking() ? "prf question" : "prf review";
+  $("crumbs").replaceChildren(el("b", { text: view.repo }), "/", el("span", { text: view.job }), el("span", { class: "branch", text: view.branch }));
+  $("roundPill").textContent = (asking() ? "Question " : "Round ") + view.round;
+  const labels = asking()
+    ? { waiting: "Waiting for your answers", submitted: "Sent", fixing: "Recording answers", rerunning: "Re-running " + view.asker, approved: "Passed", stopped: "Stopped" }
+    : { waiting: "Waiting for you", submitted: "Submitted", fixing: "Claude is fixing", approved: "Approved", stopped: "Stopped" };
+  $("statePill").className = "pill " + (view.state === "rerunning" ? "fixing" : view.state); $("statePill").textContent = labels[view.state] || view.state;
+
+  const sinceBtn = document.querySelector('[data-scope="since"]');
+  sinceBtn.disabled = !view.since;
+  sinceBtn.textContent = view.since ? `Since ${asking() ? "question" : "round"} ${view.rounds.length} (${view.since.slice(0, 7)})` : asking() ? "Since last question" : "Since last review";
+  if (!view.since && scope === "since") scope = "all";
+  document.querySelectorAll("#scope button").forEach(b => b.classList.toggle("on", b.dataset.scope === scope));
+
+  const files = parseDiff(scope === "since" ? view.since_diff : view.diff);
+  const adds = files.reduce((s, f) => s + f.add, 0), dels = files.reduce((s, f) => s + f.del, 0);
+  $("stat").replaceChildren(`${files.length} file${files.length === 1 ? "" : "s"} · `, el("span", { class: "add", text: "+" + adds }), " ", el("span", { class: "del", text: "−" + dels }),
+    ` · ${(scope === "since" ? view.since : view.base).slice(0, 7)}…${view.head.slice(0, 7)}`);
+  $("fileCount").textContent = files.length;
+  $("files").replaceChildren(...files.map(f => {
+    const nc = pending.filter(c => c.path === f.path).length;
+    return el("li", {}, el("a", { href: "#" + fileId(f.path), title: f.path },
+      el("span", { class: "name", text: f.path }), nc ? el("span", { class: "badge", text: nc }) : null,
+      el("span", { class: "cnt" }, el("span", { class: "add", text: "+" + f.add }), " ", el("span", { class: "del", text: "−" + f.del }))));
+  }));
+  $("commitCount").textContent = (view.commits || []).length;
+  $("commits").replaceChildren(...(view.commits || []).map(c => { const [h, ...s] = c.split(" "); return el("li", {}, el("code", { text: h }), s.join(" ")); }));
+  $("dirty").replaceChildren(view.dirty ? el("div", { class: "warnline", text: "The checkout has uncommitted changes. They aren't in this diff." }) : "");
+
+  renderRounds();
+  const root = $("diff"); root.replaceChildren();
+  if (!files.length) root.append(el("div", { class: "card empty", text: scope === "since" ? "Nothing changed since the last review." : "This branch has no changes yet." }));
+  for (const f of files) renderFile(f, root);
+  renderBox();
+}
+
+function toast(text) {
+  const t = el("div", { class: "toast", text }); document.body.append(t);
+  setTimeout(() => { t.style.opacity = 0; setTimeout(() => t.remove(), 400); }, 1800);
+}
+
+async function load() {
+  const res = await fetch(api("review"), { cache: "no-store" });
+  view = await res.json(); version = view.version;
+  if (view.state !== lastState && view.state === "waiting") {
+    loadDraft(); openForm = null;
+    if (view.since && !asking()) scope = "since";
+    if (lastState) { toast(asking() ? `${view.asker} has another question` : `Round ${view.round} is ready for review`); window.scrollTo({ top: 0 }); }
+  }
+  lastState = view.state;
+  render(); renderBanner();
+}
+
+async function poll(force) {
+  try {
+    const res = await fetch(api("state"), { cache: "no-store" });
+    const s = await res.json();
+    if (force || s.version !== version) await load();
+    if (view) { view.state = s.state; renderBanner(s.activity); }
+  } catch (e) {
+    if (view && approved) { view.state = "approved"; $("statePill").className = "pill approved"; $("statePill").textContent = "Approved"; renderBanner(); $("reviewBox").style.display = "none"; }
+    else if (view) { view.state = "gone"; $("statePill").className = "pill gone"; $("statePill").textContent = "Gone"; renderBanner(); $("reviewBox").style.display = "none"; }
+    return false;
+  }
+  return true;
+}
+
+document.querySelectorAll("#scope button").forEach(b => b.addEventListener("click", () => { if (!b.disabled) { scope = b.dataset.scope; render(); } }));
+$("collapseAll").addEventListener("click", () => {
+  const files = parseDiff(scope === "since" ? view.since_diff : view.diff);
+  if (collapsed.size) collapsed.clear(); else files.forEach(f => collapsed.add(f.path));
+  $("collapseAll").textContent = collapsed.size ? "Expand all" : "Collapse all"; render();
+});
+
+(async function loop() {
+  const alive = await poll(version < 0);
+  if (alive) setTimeout(loop, 2000);
+})();
+</script>
+</body>
+</html>
