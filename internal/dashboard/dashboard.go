@@ -164,9 +164,10 @@ func (s *Server) URL() string {
 	return s.url
 }
 
-// Close stops serving.
-func (s *Server) Close() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+// Close stops serving, giving open requests a second. ctx's cancellation,
+// usually what stopped prf ui, doesn't cut that second short.
+func (s *Server) Close(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	_ = s.srv.Shutdown(ctx) // open polls just drop
 	_ = s.ln.Close()        // Serve may not have started, and then Shutdown can't see it

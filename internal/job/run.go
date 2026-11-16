@@ -2,6 +2,7 @@ package job
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -34,7 +35,7 @@ import (
 // instead, running its fix role on each round of requested changes; an ask
 // gate shows you the question the step before it left, if any; a check gate
 // runs a command, having its fix role fix what fails. Every step gets <job>/tmp as PRF_TMP.
-func (j *Job) runPhases(phases []phase) (err error) {
+func (j *Job) runPhases(ctx context.Context, phases []phase) (err error) {
 	logFile, err := openAppend(j.out)
 	if err != nil {
 		j.logf("opening output: %v", err)
@@ -102,11 +103,11 @@ func (j *Job) runPhases(phases []phase) (err error) {
 		var code int
 		switch p.gate {
 		case pipeline.GateReview:
-			code = j.reviewGate(p, step, model, data)
+			code = j.reviewGate(ctx, p, step, model, data)
 		case pipeline.GateAsk:
-			code = j.askGate(p, step, model, data)
+			code = j.askGate(ctx, p, step, model, data)
 		case pipeline.GateCheck:
-			code = j.commandGate(p, step, model, data)
+			code = j.commandGate(ctx, p, step, model, data)
 		default:
 			n := j.firstStep + i + 1
 			code = j.runClaude(p, p.name, step, model, j.priorRun(n, data), i == 0)

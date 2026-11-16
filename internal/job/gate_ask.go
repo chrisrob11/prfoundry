@@ -2,6 +2,7 @@ package job
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -36,7 +37,7 @@ import (
 // code if either fails, ExitAsk when the step asks more than max_rounds
 // times, ExitOwner if you stop the job, or 130 if interrupted while waiting.
 // A resumed gate picks up where its saved rounds left off.
-func (j *Job) askGate(p phase, step, model string, data roles.Data) int {
+func (j *Job) askGate(ctx context.Context, p phase, step, model string, data roles.Data) int {
 	n, _, _ := strings.Cut(step, "/")
 	dir := filepath.Join(j.jobDir, "asks", "step-"+n)
 	rounds, err := review.ReadRounds(dir)
@@ -51,7 +52,7 @@ func (j *Job) askGate(p phase, step, model string, data roles.Data) int {
 	var srv *review.Server // started at the first question
 	defer func() {
 		if srv != nil {
-			srv.Close()
+			srv.Close(ctx)
 		}
 	}()
 	question := ""

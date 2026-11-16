@@ -293,7 +293,7 @@ func (a *app) runCmd(ctx context.Context, c *cli.Command) error {
 		}
 		branch = a.cfg.BranchPrefix + strings.TrimSuffix(filepath.Base(o.PR), ".md")
 	}
-	return j.Run(job.Clone{
+	return j.Run(ctx, job.Clone{
 		URL: url, Base: flagOr(c, "base", repo.Base), Branch: branch, Reference: repo.Path,
 		JobEnv: repo.JobEnv, JobSeed: repo.JobSeed, MaxDisk: a.cfg.MaxDisk,
 	})
@@ -329,7 +329,7 @@ func (a *app) applyCmd(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
-	return j.Apply(dir, c.String("branch"))
+	return j.Apply(ctx, dir, c.String("branch"))
 }
 
 func firstPositive(vals ...float64) float64 {

@@ -42,7 +42,7 @@ func (a *app) ui(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
-	defer srv.Close()
+	defer srv.Close(ctx)
 	_, _ = fmt.Fprintln(c.Root().Writer, srv.URL())
 	if !c.Bool("no-open") {
 		if err := a.rt.Browse(srv.URL()); err != nil {

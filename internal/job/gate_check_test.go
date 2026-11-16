@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -79,7 +80,7 @@ func TestRunCommandEdges(t *testing.T) {
 	pidFile := filepath.Join(j.tmp, "pid")
 
 	t.Run("a passing command that leaves a child running passes, and the child is killed", func(t *testing.T) {
-		out, code, err := j.runCommand("sleep 30 & echo $! > "+pidFile+"; echo done; exit 0", 0, checkRun{})
+		out, code, err := j.runCommand(t.Context(), "sleep 30 & echo $! > "+pidFile+"; echo done; exit 0", 0, checkRun{})
 		if code != 0 || err != nil || out != "done\n" {
 			t.Errorf("got %q, %d, %v", out, code, err)
 		}
@@ -90,14 +91,14 @@ func TestRunCommandEdges(t *testing.T) {
 
 	t.Run("a command that ends before its timeout isn't a timeout", func(t *testing.T) {
 		// It exits at once, but its child holds the output past the deadline.
-		_, code, err := j.runCommand("sleep 2 & exit 0", 100*time.Millisecond, checkRun{})
+		_, code, err := j.runCommand(t.Context(), "sleep 2 & exit 0", 100*time.Millisecond, checkRun{})
 		if code != 0 || err != nil {
 			t.Errorf("got %d, %v; want a pass", code, err)
 		}
 	})
 
 	t.Run("a command killed by a signal", func(t *testing.T) {
-		if _, code, err := j.runCommand("kill -9 $$", 0, checkRun{}); code != 137 || err != nil {
+		if _, code, err := j.runCommand(t.Context(), "kill -9 $$", 0, checkRun{}); code != 137 || err != nil {
 			t.Errorf("got %d, %v; want 137", code, err)
 		}
 	})
@@ -107,7 +108,7 @@ func TestRunCommandEdges(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 			j.sigs <- syscall.SIGHUP
 		}()
-		out, code, err := j.runCommand("trap 'echo cleaned up; exit 1' TERM; echo started; sleep 30 & wait", 0, checkRun{})
+		out, code, err := j.runCommand(t.Context(), "trap 'echo cleaned up; exit 1' TERM; echo started; sleep 30 & wait", 0, checkRun{})
 		if !errors.Is(err, errInterrupted) || code != 130 || !strings.Contains(out, "cleaned up") {
 			t.Errorf("got %q, %d, %v", out, code, err)
 		}
@@ -115,7 +116,7 @@ func TestRunCommandEdges(t *testing.T) {
 
 	t.Run("one that ignores SIGTERM is killed after the grace period", func(t *testing.T) {
 		start := time.Now()
-		out, code, err := j.runCommand("trap '' TERM; echo started; sleep 30", 200*time.Millisecond, checkRun{})
+		out, code, err := j.runCommand(t.Context(), "trap '' TERM; echo started; sleep 30", 200*time.Millisecond, checkRun{})
 		if code != 124 || err == nil || out != "started\n" {
 			t.Errorf("got %q, %d, %v", out, code, err)
 		}
@@ -125,7 +126,7 @@ func TestRunCommandEdges(t *testing.T) {
 	})
 
 	t.Run("the command gets its own TMPDIR, and the job's PRF_TMP", func(t *testing.T) {
-		out, _, _ := j.runCommand(`echo "$TMPDIR $PRF_TMP"`, 0, checkRun{tmp: "/short/tmp"})
+		out, _, _ := j.runCommand(t.Context(), `echo "$TMPDIR $PRF_TMP"`, 0, checkRun{tmp: "/short/tmp"})
 		if !strings.HasPrefix(out, "/short/tmp ") {
 			t.Errorf("TMPDIR and PRF_TMP = %q", out)
 		}
@@ -139,7 +140,7 @@ func TestCommandGateFailures(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 			j.sigs <- os.Interrupt
 		}()
-		if code := j.commandGate(checkPhase(t, "echo started; sleep 30", "fix"), "2/3", "", roles.Data{}); code != 130 {
+		if code := j.commandGate(t.Context(), checkPhase(t, "echo started; sleep 30", "fix"), "2/3", "", roles.Data{}); code != 130 {
 			t.Fatalf("exit %d, want 130", code)
 		}
 		if log := readFile(t, filepath.Join(j.jobDir, "checks", "step-2", "round-1.log")); log != "started\n" {
@@ -155,7 +156,7 @@ func TestCommandGateFailures(t *testing.T) {
 		if err := os.RemoveAll(j.dir); err != nil {
 			t.Fatal(err)
 		}
-		if code := j.commandGate(checkPhase(t, "true", "COMMIT"), "1/1", "", roles.Data{}); code != ExitSetup {
+		if code := j.commandGate(t.Context(), checkPhase(t, "true", "COMMIT"), "1/1", "", roles.Data{}); code != ExitSetup {
 			t.Fatalf("exit %d, want %d", code, ExitSetup)
 		}
 		if b, _ := os.ReadFile(os.Getenv("FAKE_LOG")); len(b) > 0 {
@@ -166,7 +167,7 @@ func TestCommandGateFailures(t *testing.T) {
 	t.Run("no TMPDIR for the command", func(t *testing.T) {
 		j := gateJob(t)
 		t.Setenv("TMPDIR", filepath.Join(j.jobDir, "missing"))
-		if code := j.commandGate(checkPhase(t, "true", "fix"), "1/1", "", roles.Data{}); code != ExitSetup {
+		if code := j.commandGate(t.Context(), checkPhase(t, "true", "fix"), "1/1", "", roles.Data{}); code != ExitSetup {
 			t.Fatalf("exit %d, want %d", code, ExitSetup)
 		}
 	})
@@ -175,7 +176,7 @@ func TestCommandGateFailures(t *testing.T) {
 		j := gateJob(t)
 		writeFile(t, filepath.Join(j.jobDir, "checks"), "a file, not a folder")
 		j.tmp = filepath.Join(j.jobDir, "checks", "tmp") // unwritable too
-		if code := j.commandGate(checkPhase(t, "exit 1", "fix\n{{.Review}}"), "1/1", "", roles.Data{}); code != ExitCheck {
+		if code := j.commandGate(t.Context(), checkPhase(t, "exit 1", "fix\n{{.Review}}"), "1/1", "", roles.Data{}); code != ExitCheck {
 			t.Fatalf("exit %d, want %d", code, ExitCheck)
 		}
 		fix := readFile(t, os.Getenv("FAKE_LOG"))
@@ -297,18 +298,23 @@ func TestRunCommandInterrupted(t *testing.T) {
 		j.sigs <- os.Interrupt
 	}()
 	start := time.Now()
-	out, code, err := j.runCommand("echo started; sleep 30", 0, checkRun{})
+	out, code, err := j.runCommand(t.Context(), "echo started; sleep 30", 0, checkRun{})
 	if !errors.Is(err, errInterrupted) || code != 130 || out != "started\n" {
 		t.Errorf("got %q, %d, %v", out, code, err)
 	}
 	if took := time.Since(start); took > 10*time.Second {
 		t.Errorf("took %s", took)
 	}
-	if _, _, err := j.runCommand("exit 0", 0, checkRun{}); err != nil {
+	if _, _, err := j.runCommand(t.Context(), "exit 0", 0, checkRun{}); err != nil {
 		t.Errorf("a clean run: %v", err)
 	}
+	ctx, cancel := context.WithCancel(t.Context())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if _, code, err := j.runCommand(ctx, "sleep 30", 0, checkRun{}); !errors.Is(err, errInterrupted) || code != 130 {
+		t.Errorf("a cancelled ctx: got %d, %v; want 130, interrupted", code, err)
+	}
 	j.dir = filepath.Join(j.dir, "gone")
-	if _, _, err := j.runCommand("exit 0", 0, checkRun{}); err == nil {
+	if _, _, err := j.runCommand(t.Context(), "exit 0", 0, checkRun{}); err == nil {
 		t.Error("a command that can't start should fail")
 	}
 }
@@ -407,7 +413,7 @@ func TestRealSRT(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := config.ExpandHome("~")
-	out, code, err := j.runCommand(`echo "tmp=$TMPDIR task=$PRF_TMP"
+	out, code, err := j.runCommand(t.Context(), `echo "tmp=$TMPDIR task=$PRF_TMP"
 touch ok && echo checkout-writable
 touch "$TMPDIR/x" && echo tmp-writable
 touch "$PRF_TMP/x" && echo job-tmp-writable

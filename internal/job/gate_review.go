@@ -2,6 +2,7 @@ package job
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -51,7 +52,7 @@ func notify(title, msg string) {
 // max_rounds rounds of changes, or 130 if interrupted while waiting. A
 // resumed gate picks up the rounds in <job>/reviews, addressing a round
 // of changes the job stopped before finishing.
-func (j *Job) reviewGate(p phase, step, model string, data roles.Data) int {
+func (j *Job) reviewGate(ctx context.Context, p phase, step, model string, data roles.Data) int {
 	dir := filepath.Join(j.jobDir, "reviews")
 	rounds, err := review.ReadRounds(dir)
 	if err != nil {
@@ -63,7 +64,7 @@ func (j *Job) reviewGate(p phase, step, model string, data roles.Data) int {
 		j.logf("starting the review page: %v", err)
 		return ExitSetup
 	}
-	defer srv.Close()
+	defer srv.Close(ctx)
 
 	j.event("PRF_START branch=%s phase=%s step=%s pipeline=%s", j.branch, p.name, step, j.pipeline)
 	start, fixes := time.Now(), 0

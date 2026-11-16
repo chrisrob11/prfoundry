@@ -2,6 +2,7 @@ package job
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -32,7 +33,7 @@ type Clone struct {
 // Run clones c into <job>/repo, switches to its branch, sets up the job
 // folder and the checkout, and runs the job's phases there. Its error is
 // the job's outcome, with prf's exit code.
-func (j *Job) Run(c Clone) error {
+func (j *Job) Run(ctx context.Context, c Clone) error {
 	j.branch = c.Branch
 	if err := j.setJobDir(); err != nil {
 		return exitError{"prf: " + err.Error(), ExitSetup}
@@ -71,13 +72,13 @@ func (j *Job) Run(c Clone) error {
 		j.logf("%v", err)
 		return j.finish("setup", ExitSetup)
 	}
-	return j.runPhases(j.phases)
+	return j.runPhases(ctx, j.phases)
 }
 
 // Apply runs the job's phases in the existing checkout dir, switching to
 // branch first (creating it if needed) unless it's "". Its error is the
 // job's outcome, with prf's exit code.
-func (j *Job) Apply(dir, branch string) error {
+func (j *Job) Apply(ctx context.Context, dir, branch string) error {
 	j.dir = dir
 	if !gitx.OK(j.dir, "rev-parse", "--is-inside-work-tree") {
 		return exitError{"prf: not a git repository: " + j.dir, ExitUsage}
@@ -106,7 +107,7 @@ func (j *Job) Apply(dir, branch string) error {
 		j.logf("%v", err)
 		return j.finish("setup", ExitSetup)
 	}
-	return j.runPhases(j.phases)
+	return j.runPhases(ctx, j.phases)
 }
 
 // setJobDir places the job folder under workdir, named after the PR if there
