@@ -28,11 +28,6 @@ type phase struct {
 	asks      string        // the question file of the ask gate after this role
 }
 
-// roleDirs returns where the roles of repo are looked up.
-func roleDirs(repo string) []string {
-	return roles.Dirs(home, repo)
-}
-
 // loadPhases turns pipeline steps into phases. hasWork reports whether a PR
 // or task was given; hasTask whether a task was. An ask gate's asker is the
 // phase before it.

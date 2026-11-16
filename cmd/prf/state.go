@@ -169,7 +169,7 @@ func processAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
-func statusCmd() *cli.Command {
+func (a *app) statusCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "status",
 		Usage: "show every job under the workdir: its state, pipeline step, and what Claude is doing",
@@ -183,7 +183,7 @@ func statusCmd() *cli.Command {
 			&cli.BoolFlag{Name: "json", Usage: "print JSON"},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
-			states, err := readJobStates(flagOr(c, "workdir", cfg.Workdir), c.String("repo"))
+			states, err := readJobStates(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 			if err != nil {
 				return cli.Exit("prf: "+err.Error(), exitUsage)
 			}

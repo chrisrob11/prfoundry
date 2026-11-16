@@ -34,7 +34,7 @@ func indexCmd(ctx context.Context, c *cli.Command) error {
 // top of the folder, with a trailing / for directories, so every phase's
 // prompt can point at it without listing every package file.
 func (j *job) prepareContext() error {
-	p, _, err := pipeline.Read(home, j.name)
+	p, _, err := pipeline.Read(j.home, j.name)
 	if err != nil {
 		return err
 	}

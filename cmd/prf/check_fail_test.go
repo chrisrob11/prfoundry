@@ -338,9 +338,6 @@ func TestCheckGateHangup(t *testing.T) {
 
 func TestCheckPipelineErrors(t *testing.T) {
 	e := checkEnv(t, `"review"`, "")
-	prev := home
-	home = e.home
-	t.Cleanup(func() { home = prev })
 	for _, tt := range []struct {
 		steps []pipeline.Step
 		want  string
@@ -350,7 +347,7 @@ func TestCheckPipelineErrors(t *testing.T) {
 		{[]pipeline.Step{{Role: "implement", Model: "bad model"}}, "invalid model"},
 		{[]pipeline.Step{{Gate: pipeline.GateCheck, Run: "make", Timeout: "0s"}}, `timeout "0s" isn't a duration`},
 	} {
-		if err := checkPipeline("origin", tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
+		if err := checkPipeline(e.home, "origin", tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("checkPipeline(%+v) = %v, want %q", tt.steps, err, tt.want)
 		}
 	}

@@ -443,7 +443,7 @@ func (j *job) useJobWriteDirs() error {
 	if !strings.HasPrefix(j.dir, j.jobDir+string(filepath.Separator)) {
 		return nil
 	}
-	repo := cfg.Repos[j.name]
+	repo := j.cfg.Repos[j.name]
 	for _, d := range jobenv.WriteDirs(j.jobDir, repo.JobEnv, repo.JobSeed) {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err

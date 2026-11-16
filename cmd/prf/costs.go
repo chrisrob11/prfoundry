@@ -13,7 +13,7 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-func costsCmd() *cli.Command {
+func (a *app) costsCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "costs",
 		Usage: "sum what each role has cost across jobs, by role and model, most expensive first",
@@ -27,7 +27,7 @@ func costsCmd() *cli.Command {
 			&cli.BoolFlag{Name: "json", Usage: "print JSON"},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
-			states, err := readJobStates(flagOr(c, "workdir", cfg.Workdir), c.String("repo"))
+			states, err := readJobStates(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 			if err != nil {
 				return cli.Exit("prf: "+err.Error(), exitUsage)
 			}

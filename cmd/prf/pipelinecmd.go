@@ -19,7 +19,7 @@ import (
 
 // checkPipeline reports the first step that names a missing or invalid role,
 // or an invalid model, for repo, or a @check with no command to run.
-func checkPipeline(repo string, steps []pipeline.Step) error {
+func checkPipeline(home, repo string, steps []pipeline.Step) error {
 	if len(steps) == 0 {
 		return errors.New("lists no roles")
 	}
@@ -44,7 +44,7 @@ func checkPipeline(repo string, steps []pipeline.Step) error {
 		if s.Gate != "" {
 			role = s.Fixer() // the gate needs its fix role
 		}
-		text, err := roles.Find(roleDirs(repo), role)
+		text, err := roles.Find(roles.Dirs(home, repo), role)
 		if err == nil {
 			err = roles.Validate(role, text)
 		}
@@ -64,7 +64,7 @@ type pipelineEntry struct {
 	Error   string          `json:"error,omitempty"`
 }
 
-func pipelineCmd() *cli.Command {
+func (a *app) pipelineCmd() *cli.Command {
 	repoFlag := &cli.StringFlag{Name: "repo", Required: true, Usage: "repo whose " + pipeline.FileName + " to use (an alias or repo name)"}
 	jsonFlag := &cli.BoolFlag{Name: "json", Usage: "print JSON"}
 	return &cli.Command{
@@ -80,33 +80,33 @@ func pipelineCmd() *cli.Command {
 			"A repo without the file has a built-in \"default\" pipeline: " + pipeline.Join(pipeline.Builtin(), ", ") + ".\n" +
 			"set refuses a pipeline that names a missing or invalid role, and leaves the file unchanged.",
 		Commands: []*cli.Command{
-			{Name: "list", Usage: "list the repo's pipelines, which is the default, and whether each is valid", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: pipelineList},
-			{Name: "show", Usage: "print a pipeline's steps (role or role:model), one per line", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: pipelineShow},
+			{Name: "list", Usage: "list the repo's pipelines, which is the default, and whether each is valid", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: a.pipelineList},
+			{Name: "show", Usage: "print a pipeline's steps (role or role:model), one per line", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: a.pipelineShow},
 			{Name: "set", Usage: "create or replace a pipeline from --roles, --file, or stdin (steps one per line or comma-separated)", ArgsUsage: "<name>",
 				Flags: []cli.Flag{repoFlag,
 					&cli.StringFlag{Name: "roles", Usage: "comma-separated steps (role or role:model), instead of stdin"},
 					&cli.StringFlag{Name: "file", Usage: "read roles from this file instead of stdin"},
 					&cli.BoolFlag{Name: "default", Usage: "also make it the default pipeline"},
-				}, Action: pipelineSet},
-			{Name: "remove", Usage: "delete a pipeline", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag}, Action: pipelineRemove},
-			{Name: "default", Usage: "make a pipeline the one that runs when --pipeline isn't given", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag}, Action: pipelineDefault},
+				}, Action: a.pipelineSet},
+			{Name: "remove", Usage: "delete a pipeline", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag}, Action: a.pipelineRemove},
+			{Name: "default", Usage: "make a pipeline the one that runs when --pipeline isn't given", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag}, Action: a.pipelineDefault},
 		},
 	}
 }
 
-func pipelineList(ctx context.Context, c *cli.Command) error {
+func (a *app) pipelineList(ctx context.Context, c *cli.Command) error {
 	repo, err := repoArg(c)
 	if err != nil {
 		return err
 	}
-	p, exists, err := pipeline.Read(home, repo)
+	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	var entries []pipelineEntry
 	for _, name := range slices.Sorted(maps.Keys(p.Pipelines)) {
 		e := pipelineEntry{Name: name, Steps: p.Pipelines[name], Default: name == p.Default}
-		if err := checkPipeline(repo, e.Steps); err != nil {
+		if err := checkPipeline(a.home, repo, e.Steps); err != nil {
 			e.Error = err.Error()
 		}
 		e.Valid = e.Error == ""
@@ -118,9 +118,9 @@ func pipelineList(ctx context.Context, c *cli.Command) error {
 		return jsonio.Write(w, entries)
 	}
 	if !exists {
-		_, _ = fmt.Fprintf(w, "# %s doesn't exist; using the built-in default\n", pipeline.Path(home, repo))
+		_, _ = fmt.Fprintf(w, "# %s doesn't exist; using the built-in default\n", pipeline.Path(a.home, repo))
 	}
-	if m := firstNonEmpty(p.Model, cfg.Model); m != "" {
+	if m := firstNonEmpty(p.Model, a.cfg.Model); m != "" {
 		_, _ = fmt.Fprintf(w, "# steps without a model use %s\n", m)
 	}
 	for _, e := range entries {
@@ -136,19 +136,19 @@ func pipelineList(ctx context.Context, c *cli.Command) error {
 	return nil
 }
 
-func pipelineShow(ctx context.Context, c *cli.Command) error {
+func (a *app) pipelineShow(ctx context.Context, c *cli.Command) error {
 	repo, name, err := repoAndName(c)
 	if err != nil {
 		return err
 	}
-	roles, _, err := pipeline.Lookup(home, repo, name)
+	roles, _, err := pipeline.Lookup(a.home, repo, name)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	if c.Bool("json") {
-		p, _, _ := pipeline.Read(home, repo)
+		p, _, _ := pipeline.Read(a.home, repo)
 		e := pipelineEntry{Name: name, Steps: roles, Default: name == p.Default}
-		if err := checkPipeline(repo, roles); err != nil {
+		if err := checkPipeline(a.home, repo, roles); err != nil {
 			e.Error = err.Error()
 		}
 		e.Valid = e.Error == ""
@@ -158,7 +158,7 @@ func pipelineShow(ctx context.Context, c *cli.Command) error {
 	return err
 }
 
-func pipelineSet(ctx context.Context, c *cli.Command) error {
+func (a *app) pipelineSet(ctx context.Context, c *cli.Command) error {
 	repo, name, err := repoAndName(c)
 	if err != nil {
 		return err
@@ -178,13 +178,13 @@ func pipelineSet(ctx context.Context, c *cli.Command) error {
 	}
 	roles, err := pipeline.ParseSteps(text)
 	if err == nil {
-		err = checkPipeline(repo, roles)
+		err = checkPipeline(a.home, repo, roles)
 	}
 	if err != nil {
 		return cli.Exit(fmt.Sprintf("prf: not saved: pipeline %s: %v", name, err), exitUsage)
 	}
 
-	p, exists, err := pipeline.Read(home, repo)
+	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
@@ -195,51 +195,51 @@ func pipelineSet(ctx context.Context, c *cli.Command) error {
 	if c.Bool("default") || p.Default == "" {
 		p.Default = name
 	}
-	if err := pipeline.Write(home, repo, p); err != nil {
+	if err := pipeline.Write(a.home, repo, p); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "saved pipeline %s for %s: %s\n", name, repo, pipeline.Join(roles, " -> "))
 	return nil
 }
 
-func pipelineRemove(ctx context.Context, c *cli.Command) error {
+func (a *app) pipelineRemove(ctx context.Context, c *cli.Command) error {
 	repo, name, err := repoAndName(c)
 	if err != nil {
 		return err
 	}
-	p, exists, err := pipeline.Read(home, repo)
+	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	if _, ok := p.Pipelines[name]; !exists || !ok {
-		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(home, repo)), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), exitUsage)
 	}
 	delete(p.Pipelines, name)
 	if p.Default == name {
 		p.Default = ""
 		logf("warning: %s was the default; run prf pipeline default to pick another", name)
 	}
-	if err := pipeline.Write(home, repo, p); err != nil {
+	if err := pipeline.Write(a.home, repo, p); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "removed pipeline %s for %s\n", name, repo)
 	return nil
 }
 
-func pipelineDefault(ctx context.Context, c *cli.Command) error {
+func (a *app) pipelineDefault(ctx context.Context, c *cli.Command) error {
 	repo, name, err := repoAndName(c)
 	if err != nil {
 		return err
 	}
-	p, exists, err := pipeline.Read(home, repo)
+	p, exists, err := pipeline.Read(a.home, repo)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	if _, ok := p.Pipelines[name]; !exists || !ok {
-		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(home, repo)), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: repo %s has no pipeline %q in %s", repo, name, pipeline.Path(a.home, repo)), exitUsage)
 	}
 	p.Default = name
-	if err := pipeline.Write(home, repo, p); err != nil {
+	if err := pipeline.Write(a.home, repo, p); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "default pipeline for %s is now %s\n", repo, name)
@@ -267,7 +267,7 @@ func repoAndName(c *cli.Command) (repo, name string, err error) {
 // jobRoles picks the steps to run: --role, else --pipeline from the repo's
 // pipeline.json, else (when useDefault) its default pipeline. It also
 // returns a name for them: the pipeline's, "roles" for --role, or "" for none.
-func jobRoles(c *cli.Command, repo string, useDefault bool) ([]pipeline.Step, string, error) {
+func jobRoles(c *cli.Command, home, repo string, useDefault bool) ([]pipeline.Step, string, error) {
 	if c.IsSet("role") {
 		if c.IsSet("pipeline") {
 			return nil, "", errors.New("give --role or --pipeline, not both")

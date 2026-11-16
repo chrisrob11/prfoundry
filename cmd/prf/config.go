@@ -15,53 +15,55 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// home is the prf home dir, normally ~/.prf. Set by loadConfig.
-var home string
-
-// cfg is home/conf.json, loaded by loadConfig. Flags and env vars override it.
-var cfg config.Config
+// app is what every command reads before its flags: the prf home and its
+// conf.json. newApp makes one, its Before hook fills it in, and the
+// commands are its methods.
+type app struct {
+	home string        // the prf home dir, normally ~/.prf
+	cfg  config.Config // home/conf.json; flags and env vars override it
+}
 
 // loadConfig is the root Before hook: it sets home and cfg.
-func loadConfig(ctx context.Context, c *cli.Command) (context.Context, error) {
+func (a *app) loadConfig(ctx context.Context, c *cli.Command) (context.Context, error) {
 	var err error
-	if home, err = filepath.Abs(config.ExpandHome(c.String("home"))); err != nil {
+	if a.home, err = filepath.Abs(config.ExpandHome(c.String("home"))); err != nil {
 		return ctx, err
 	}
-	if cfg, err = config.Read(filepath.Join(home, config.FileName)); err != nil {
+	if a.cfg, err = config.Read(filepath.Join(a.home, config.FileName)); err != nil {
 		return ctx, err
 	}
 	return ctx, nil
 }
 
-func configCmd() *cli.Command {
+func (a *app) configCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "config",
 		Usage: "show the prf home, its conf.json, and the repos it has pipelines and roles for",
 		Action: func(ctx context.Context, c *cli.Command) error {
 			w := c.Root().Writer
-			path := filepath.Join(home, config.FileName)
+			path := filepath.Join(a.home, config.FileName)
 			if _, err := os.Stat(path); err != nil {
 				_, _ = fmt.Fprintf(w, "# %s (not found; create it with: prf config init)\n", path)
 			} else {
 				_, _ = fmt.Fprintf(w, "# %s\n", path)
 			}
-			for _, repo := range config.ConfiguredRepos(home) {
-				_, _ = fmt.Fprintf(w, "# repo %s: %s\n", repo, filepath.Join(home, repo))
+			for _, repo := range config.ConfiguredRepos(a.home) {
+				_, _ = fmt.Fprintf(w, "# repo %s: %s\n", repo, filepath.Join(a.home, repo))
 			}
-			return jsonio.Write(w, cfg)
+			return jsonio.Write(w, a.cfg)
 		},
 		Commands: []*cli.Command{{
 			Name:   "init",
 			Usage:  "write a starter conf.json, the built-in roles, and the sandbox settings, skipping files that exist",
-			Action: initConfig,
+			Action: a.initConfig,
 		}},
 	}
 }
 
-func initConfig(ctx context.Context, c *cli.Command) error {
+func (a *app) initConfig(ctx context.Context, c *cli.Command) error {
 	files := [][2]string{
-		{filepath.Join(home, config.FileName), config.Template},
-		{filepath.Join(home, sandbox.SettingsFile), string(sandbox.DefaultSettings())},
+		{filepath.Join(a.home, config.FileName), config.Template},
+		{filepath.Join(a.home, sandbox.SettingsFile), string(sandbox.DefaultSettings())},
 	}
 	entries, err := fs.ReadDir(roles.Builtin(), ".")
 	if err != nil {
@@ -72,7 +74,7 @@ func initConfig(ctx context.Context, c *cli.Command) error {
 		if err != nil {
 			return err
 		}
-		files = append(files, [2]string{filepath.Join(home, "roles", e.Name()), string(b)})
+		files = append(files, [2]string{filepath.Join(a.home, "roles", e.Name()), string(b)})
 	}
 
 	w := c.Root().Writer
