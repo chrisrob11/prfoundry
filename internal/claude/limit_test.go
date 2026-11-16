@@ -3,6 +3,8 @@ package claude
 import (
 	"testing"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/agent"
 )
 
 func TestLimitResetReadsTheStatedTime(t *testing.T) {
@@ -25,7 +27,7 @@ func TestLimitResetReadsTheStatedTime(t *testing.T) {
 		{"You've hit your 5-hour limit · resets 13:70pm (UTC)", now.Add(limitFallback)},                                      // unreadable time
 	}
 	for _, c := range cases {
-		got, ok := Result{IsError: true, Text: c.text}.LimitReset(now)
+		got, ok := limitReset(agent.Result{IsError: true, Text: c.text}, now)
 		if !ok || !got.Equal(c.want) {
 			t.Errorf("%q: got %v %t, want %v", c.text, got, ok, c.want)
 		}
@@ -34,12 +36,12 @@ func TestLimitResetReadsTheStatedTime(t *testing.T) {
 
 func TestLimitResetIgnoresOtherResults(t *testing.T) {
 	now := time.Now()
-	for _, res := range []Result{
+	for _, res := range []agent.Result{
 		{IsError: true, Text: "it broke"},
 		{IsError: false, Text: "You've hit your 5-hour limit · resets 3pm"}, // a success that quotes the message
 		{},
 	} {
-		if _, ok := res.LimitReset(now); ok {
+		if _, ok := limitReset(res, now); ok {
 			t.Errorf("%+v read as a usage limit", res)
 		}
 	}

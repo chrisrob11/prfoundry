@@ -19,6 +19,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
+	"github.com/chrisrob11/prfoundry/internal/opencode"
 )
 
 // FileName is the file that holds a repo's pipelines: <home>/<repo>/pipeline.json.
@@ -33,15 +34,16 @@ func Builtin() []Step {
 // one runs when --pipeline isn't given, the model and expectation steps use
 // unless they name their own, and how to prepare a fresh checkout.
 type File struct {
-	Default     string            `json:"default,omitempty"`
-	Model       string            `json:"model,omitempty"`
-	MaxCost     float64           `json:"max_cost,omitempty"`      // the whole job's budget in USD
-	MaxStepCost float64           `json:"max_step_cost,omitempty"` // each step's budget, unless it sets max_cost
-	Pipelines   map[string][]Step `json:"pipelines"`
-	Index       *bool             `json:"index,omitempty"`  // build the codebase map; default true
-	Setup       []string          `json:"setup,omitempty"`  // shell commands run in the checkout before the first phase
-	Check       string            `json:"check,omitempty"`  // the command @check runs, unless it names its own
-	Expect      string            `json:"expect,omitempty"` // what role steps must leave behind, unless they set their own
+	Default       string            `json:"default,omitempty"`
+	Model         string            `json:"model,omitempty"`
+	OpenCodeModel string            `json:"opencode_model,omitempty"` // Model, when the agent is opencode
+	MaxCost       float64           `json:"max_cost,omitempty"`       // the whole job's budget in USD
+	MaxStepCost   float64           `json:"max_step_cost,omitempty"`  // each step's budget, unless it sets max_cost
+	Pipelines     map[string][]Step `json:"pipelines"`
+	Index         *bool             `json:"index,omitempty"`  // build the codebase map; default true
+	Setup         []string          `json:"setup,omitempty"`  // shell commands run in the checkout before the first phase
+	Check         string            `json:"check,omitempty"`  // the command @check runs, unless it names its own
+	Expect        string            `json:"expect,omitempty"` // what role steps must leave behind, unless they set their own
 }
 
 // Step is one stage of a pipeline: a role, and the model it runs on if it
@@ -50,16 +52,17 @@ type File struct {
 // or "@check" in either, or {"gate": "review", ...} with its options;
 // its model is the one its fix role runs on.
 type Step struct {
-	Role      string  `json:"role,omitempty"`
-	Gate      string  `json:"gate,omitempty"`       // review, ask or check: a gate instead of a role
-	FixRole   string  `json:"fix_role,omitempty"`   // the gate's role for acting on what you said, or on what failed
-	MaxRounds int     `json:"max_rounds,omitempty"` // the gate's limit on rounds
-	Question  string  `json:"question,omitempty"`   // the ask gate's question file
-	Run       string  `json:"run,omitempty"`        // the check gate's command
-	Timeout   string  `json:"timeout,omitempty"`    // how long the check gate's command may take
-	Model     string  `json:"model,omitempty"`
-	MaxCost   float64 `json:"max_cost,omitempty"` // this step's budget in USD
-	Expect    string  `json:"expect,omitempty"`   // what the role must leave behind: commits, read-only or clean
+	Role          string  `json:"role,omitempty"`
+	Gate          string  `json:"gate,omitempty"`       // review, ask or check: a gate instead of a role
+	FixRole       string  `json:"fix_role,omitempty"`   // the gate's role for acting on what you said, or on what failed
+	MaxRounds     int     `json:"max_rounds,omitempty"` // the gate's limit on rounds
+	Question      string  `json:"question,omitempty"`   // the ask gate's question file
+	Run           string  `json:"run,omitempty"`        // the check gate's command
+	Timeout       string  `json:"timeout,omitempty"`    // how long the check gate's command may take
+	Model         string  `json:"model,omitempty"`
+	OpenCodeModel string  `json:"opencode_model,omitempty"` // Model, when the agent is opencode
+	MaxCost       float64 `json:"max_cost,omitempty"`       // this step's budget in USD
+	Expect        string  `json:"expect,omitempty"`         // what the role must leave behind: commits, read-only or clean
 }
 
 // The gates and their defaults.
@@ -131,7 +134,7 @@ func (s *Step) UnmarshalJSON(b []byte) error {
 
 // MarshalJSON writes a step with only a role (or gate) as just its name.
 func (s Step) MarshalJSON() ([]byte, error) {
-	if s.Model == "" && s.MaxCost == 0 && s.FixRole == "" && s.MaxRounds == 0 && s.Question == "" && s.Run == "" && s.Timeout == "" && s.Expect == "" {
+	if s.Model == "" && s.OpenCodeModel == "" && s.MaxCost == 0 && s.FixRole == "" && s.MaxRounds == 0 && s.Question == "" && s.Run == "" && s.Timeout == "" && s.Expect == "" {
 		return json.Marshal(s.Name())
 	}
 	type plain Step
@@ -200,6 +203,9 @@ func Read(home, repo string) (p File, exists bool, err error) {
 	}
 	if p.Model != "" && !modelName.MatchString(p.Model) {
 		return File{}, false, fmt.Errorf("%s: invalid model %q", path, p.Model)
+	}
+	if p.OpenCodeModel != "" && !opencode.ValidModel(p.OpenCodeModel) {
+		return File{}, false, fmt.Errorf("%s: opencode_model must be provider/model, not %q", path, p.OpenCodeModel)
 	}
 	if p.Expect != "" && !validExpect(p.Expect) {
 		return File{}, false, fmt.Errorf("%s: expect must be %s, not %q", path, expectList, p.Expect)

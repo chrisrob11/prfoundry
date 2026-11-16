@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chrisrob11/prfoundry/internal/claude"
+	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
@@ -74,16 +74,16 @@ type Options struct {
 	JobEnv  map[string]string
 	JobSeed []jobenv.Seed
 
-	Workdir    string // job folders go in <Workdir>/<Repo>/<job>/
-	Out        string // Claude's step-by-step log; "" for <job>/claude.log, with each step's summary on Stdout
-	Status     string // the status file; "" for <job>/status
-	In         string // extra context on Claude's stdin: a file, or a fifo or "-"
-	Verbose    bool   // also print each of Claude's steps on Stderr
-	Mode       string // Claude's permission mode
-	Claude     string // the claude binary
-	ClaudeArgs []string
-	Sandbox    bool // run Claude in Claude Code's sandbox
-	ReviewOpen bool // open a gate's page in your browser
+	Workdir    string      // job folders go in <Workdir>/<Repo>/<job>/
+	Out        string      // Claude's step-by-step log; "" for <job>/claude.log, with each step's summary on Stdout
+	Status     string      // the status file; "" for <job>/status
+	In         string      // extra context on Claude's stdin: a file, or a fifo or "-"
+	Verbose    bool        // also print each of Claude's steps on Stderr
+	Mode       string      // Claude's permission mode
+	Agent      agent.Agent // the coding agent each step runs
+	AgentArgs  []string    // conf.json's arguments for the agent, and the command line's
+	Sandbox    bool        // run Claude in Claude Code's sandbox
+	ReviewOpen bool        // open a gate's page in your browser
 
 	Stdout, Stderr io.Writer
 	Runtime        Runtime
@@ -173,8 +173,8 @@ type Job struct {
 	state        state.Job // what's in <job>/state.json
 	in           string
 	mode         string
-	claude       string
-	claudeArgs   []string
+	agent        agent.Agent
+	agentArgs    []string
 	reviewOpen   bool // open the review page in your browser when a review gate is reached
 	rt           Runtime
 	grace        time.Duration // commandGrace, which tests shorten
@@ -184,14 +184,18 @@ type Job struct {
 	feed       io.Writer // the log, plus stderr with --verbose
 	summaries  io.Writer // where each phase's final message goes
 	sigs       chan os.Signal
-	cost       float64       // spent so far, including before a resume
-	lastResult claude.Result // the last Claude run's result
+	cost       float64      // spent so far, including before a resume
+	lastResult agent.Result // the last agent run's result
 }
 
 // New loads every role the job's steps name, so a typo fails before any
 // git work happens. Its errors are usage errors.
 func New(o Options) (*Job, error) {
-	phases, err := loadPhases(o.Steps, roles.Dirs(o.Home, o.Repo), o.PR != "" || o.Task != "", o.Task != "")
+	steps := make([]pipeline.Step, len(o.Steps))
+	for i, s := range o.Steps {
+		steps[i] = stepFor(s, o.Agent.Name())
+	}
+	phases, err := loadPhases(steps, roles.Dirs(o.Home, o.Repo), o.PR != "" || o.Task != "", o.Task != "")
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +216,7 @@ func newJob(o Options) *Job {
 		push: o.Push, prCreate: o.PRCreate, base: o.Base, prTitleFile: o.PRTitleFile, prBodyFile: o.PRBodyFile,
 		jobEnv: o.JobEnv, jobSeed: o.JobSeed,
 		workdir: o.Workdir, outFlag: o.Out, statusFlag: o.Status, in: o.In, verbose: o.Verbose,
-		mode: o.Mode, claude: o.Claude, claudeArgs: o.ClaudeArgs, sandbox: o.Sandbox, reviewOpen: o.ReviewOpen,
+		mode: o.Mode, agent: o.Agent, agentArgs: o.AgentArgs, sandbox: o.Sandbox, reviewOpen: o.ReviewOpen,
 		stdout: o.Stdout, stderr: o.Stderr, rt: o.Runtime.withDefaults(), grace: commandGrace,
 	}
 }

@@ -10,7 +10,8 @@ plan: one `prf run` per PR, each reporting a machine-readable status when it's d
 
 ## Requirements
 
-- **Claude Code** (`claude`) on your PATH and logged in. prf runs it as `claude -p`.
+- **claude or opencode** on your PATH and logged in: Claude Code (the default, run as `claude -p`)
+  or [opencode](docs/configuration.md#the-agent-claude-or-opencode) (`opencode run`).
 - **git**, and **gh** if you want prf to open PRs (`--pr-create`).
 - **Go** to build prf. The repo pins its version in `mise.toml`.
 - **For the sandbox:** macOS works out of the box. Linux and WSL2 need `bubblewrap` and `socat`
