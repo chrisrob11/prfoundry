@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
 // jobPlaceholder in a job_env value or a job_seed target is the job folder.
@@ -72,7 +74,7 @@ func writeJobEnv(jobDir, repo string, env map[string]string) error {
 	for _, name := range names {
 		fmt.Fprintf(&b, "%s = %s\n", name, tomlString(expandJob(env[name], jobDir)))
 	}
-	return writeFile(filepath.Join(jobDir, jobEnvFile), b.String())
+	return textfile.Write(filepath.Join(jobDir, jobEnvFile), b.String())
 }
 
 // tomlString quotes s as a TOML basic string, whose escapes are JSON's.

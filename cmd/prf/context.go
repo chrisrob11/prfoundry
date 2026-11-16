@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/codeindex"
+	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
@@ -20,7 +21,7 @@ func indexCmd(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	start := time.Now()
-	if err := codeindex.Build(dir, filepath.Base(dir), firstNonEmpty(gitOutput(dir, "branch", "--show-current"), "HEAD"), c.String("out")); err != nil {
+	if err := codeindex.Build(dir, filepath.Base(dir), firstNonEmpty(gitx.Output(dir, "branch", "--show-current"), "HEAD"), c.String("out")); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "wrote %s in %s\n", filepath.Join(c.String("out"), "index.md"), time.Since(start).Round(time.Millisecond))

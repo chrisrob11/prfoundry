@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
@@ -190,7 +191,7 @@ func statusCmd() *cli.Command {
 				if states == nil {
 					states = []jobState{}
 				}
-				return writeJSON(w, states)
+				return jsonio.Write(w, states)
 			}
 			if len(states) == 0 {
 				_, _ = fmt.Fprintln(w, "no jobs")

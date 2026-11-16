@@ -4,11 +4,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
 func writeRole(t *testing.T, dir, name, text string) {
 	t.Helper()
-	if err := writeFile(filepath.Join(dir, name+".md"), text); err != nil {
+	if err := textfile.Write(filepath.Join(dir, name+".md"), text); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
 // settingsFile is the Claude Code settings file passed to every phase. It is
@@ -102,7 +104,7 @@ func settingsPath(repo string) (string, error) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		return "", err
 	}
-	if err := writeFile(shared, string(defaultSettings())); err != nil {
+	if err := textfile.Write(shared, string(defaultSettings())); err != nil {
 		return "", err
 	}
 	logf("wrote default sandbox settings to %s; edit it to change what Claude can reach", shared)

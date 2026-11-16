@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 	"github.com/urfave/cli/v3"
 )
 
@@ -108,7 +109,7 @@ func TestConfigInit(t *testing.T) {
 
 func writeFileT(t *testing.T, path, s string) {
 	t.Helper()
-	if err := writeFile(path, s); err != nil {
+	if err := textfile.Write(path, s); err != nil {
 		t.Fatal(err)
 	}
 }

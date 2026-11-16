@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/itemname"
+	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
 )
@@ -128,7 +129,7 @@ func roleList(ctx context.Context, c *cli.Command) error {
 		for i := range entries {
 			entries[i].Content = ""
 		}
-		return writeJSON(w, entries)
+		return jsonio.Write(w, entries)
 	}
 	if len(entries) == 0 {
 		_, _ = fmt.Fprintf(w, "no roles in %s (prf config init installs the built-in roles)\n", strings.Join(roleDirs(repo), " or "))
@@ -157,7 +158,7 @@ func roleShow(ctx context.Context, c *cli.Command) error {
 		return cli.Exit(fmt.Sprintf("prf: no role %q in %s", name, strings.Join(roleDirs(repo), " or ")), exitUsage)
 	}
 	if c.Bool("json") {
-		return writeJSON(c.Root().Writer, e)
+		return jsonio.Write(c.Root().Writer, e)
 	}
 	_, err = io.WriteString(c.Root().Writer, e.Content)
 	return err
@@ -246,14 +247,8 @@ func nameArg(c *cli.Command, kind string) (string, error) {
 		return "", cli.Exit(fmt.Sprintf("prf: give exactly one %s name", kind), exitUsage)
 	}
 	name := c.Args().First()
-	if !itemName.MatchString(name) {
+	if !itemname.Valid(name) {
 		return "", cli.Exit(fmt.Sprintf("prf: invalid %s name %q: use letters, digits, '-', '_' and '.'", kind, name), exitUsage)
 	}
 	return name, nil
-}
-
-func writeJSON(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
 }

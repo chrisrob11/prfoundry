@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/urfave/cli/v3"
 )
 
@@ -36,7 +37,7 @@ func costsCmd() *cli.Command {
 				if rows == nil {
 					rows = []roleSpend{}
 				}
-				return writeJSON(w, rows)
+				return jsonio.Write(w, rows)
 			}
 			if total == 0 {
 				_, _ = fmt.Fprintln(w, "no spend recorded")

@@ -15,8 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 	"github.com/urfave/cli/v3"
 )
 
@@ -244,7 +246,7 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, 
 	phaseStart, prog := time.Now(), &progress{}
 	expect, startHead := j.expectOf(p), ""
 	if expect != "" {
-		startHead = gitOutput(j.dir, "rev-parse", "HEAD")
+		startHead = gitx.Output(j.dir, "rev-parse", "HEAD")
 	}
 	if err := claude.Start(); err != nil {
 		logf("running claude: %v", err)
@@ -350,14 +352,14 @@ func (j *job) asked(p phase) bool {
 // when the step started, or "" if it doesn't.
 func (j *job) brokenExpectation(expect, start string) string {
 	var broke []string
-	head := gitOutput(j.dir, "rev-parse", "HEAD")
+	head := gitx.Output(j.dir, "rev-parse", "HEAD")
 	switch {
 	case expect == pipeline.ExpectCommits && head == start:
 		broke = append(broke, "made no commits")
 	case expect == pipeline.ExpectReadOnly && head != start:
 		broke = append(broke, fmt.Sprintf("made commits: HEAD moved from %s to %s", shortSHA(start), shortSHA(head)))
 	}
-	if status := gitOutput(j.dir, "status", "--porcelain"); status != "" {
+	if status := gitx.Output(j.dir, "status", "--porcelain"); status != "" {
 		lines := strings.Split(status, "\n")
 		shown := lines[:min(len(lines), 5)]
 		for i := range shown {
@@ -390,7 +392,7 @@ func (j *job) priorRun(n int, data roles.Data) roles.Data {
 // recordRun saves where step n's run ended, and its final message as its
 // report, for the next time the step runs.
 func (j *job) recordRun(n int) {
-	head := gitOutput(j.dir, "rev-parse", "HEAD")
+	head := gitx.Output(j.dir, "rev-parse", "HEAD")
 	j.setState(func(s *jobState) {
 		if s.StepHeads == nil {
 			s.StepHeads = map[int]string{}
@@ -404,7 +406,7 @@ func (j *job) recordRun(n int) {
 		}
 		return
 	}
-	if err := writeFile(path, j.lastResult.text+"\n"); err != nil {
+	if err := textfile.Write(path, j.lastResult.text+"\n"); err != nil {
 		logf("saving step %d's report: %v", n, err)
 	}
 }
@@ -456,11 +458,11 @@ func (j *job) baseCommit() string {
 		refs = append([]string{"origin/" + j.base, j.base}, refs...)
 	}
 	for _, ref := range refs {
-		if mb := gitOutput(j.dir, "merge-base", ref, "HEAD"); mb != "" {
+		if mb := gitx.Output(j.dir, "merge-base", ref, "HEAD"); mb != "" {
 			return mb
 		}
 	}
-	return gitOutput(j.dir, "rev-parse", "HEAD")
+	return gitx.Output(j.dir, "rev-parse", "HEAD")
 }
 
 // stateEvery is how often a running phase's latest activity is saved.
@@ -567,14 +569,6 @@ func closeInto(err *error, f io.Closer) {
 	}
 }
 
-// writeFile writes s to path, creating parent directories.
-func writeFile(path, s string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(s), 0o644)
-}
-
 // statfs reads a filesystem's size and free space; tests replace it.
 var statfs = syscall.Statfs
 
@@ -629,7 +623,7 @@ func cloneRepo(repo, base, branch, dir, reference string) error {
 	}
 
 	cloneArgs := []string{"clone", "--quiet"}
-	if reference != "" && gitOK(reference, "rev-parse", "--git-dir") {
+	if reference != "" && gitx.OK(reference, "rev-parse", "--git-dir") {
 		logf("cloning %s -> %s (objects from %s)", repo, dir, reference)
 		cloneArgs = append(cloneArgs, "--reference", reference, "--dissociate")
 	} else {
@@ -638,7 +632,7 @@ func cloneRepo(repo, base, branch, dir, reference string) error {
 	if base != "" {
 		cloneArgs = append(cloneArgs, "--branch", base)
 	}
-	if err := git("", append(cloneArgs, repo, dir)...); err != nil {
+	if err := gitx.Run("", append(cloneArgs, repo, dir)...); err != nil {
 		return err
 	}
 	return switchBranch(dir, branch)
@@ -647,39 +641,11 @@ func cloneRepo(repo, base, branch, dir, reference string) error {
 // switchBranch switches to branch if it exists locally or on origin, and
 // creates it from the current HEAD otherwise.
 func switchBranch(dir, branch string) error {
-	if gitOK(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch) ||
-		gitOK(dir, "ls-remote", "--exit-code", "--heads", "origin", branch) {
+	if gitx.OK(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch) ||
+		gitx.OK(dir, "ls-remote", "--exit-code", "--heads", "origin", branch) {
 		logf("switching to existing branch %s", branch)
-		return git(dir, "switch", "--quiet", branch)
+		return gitx.Run(dir, "switch", "--quiet", branch)
 	}
 	logf("creating branch %s", branch)
-	return git(dir, "switch", "--quiet", "-c", branch)
-}
-
-func git(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Stdout, cmd.Stderr = io.Discard, os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("git %s: %w", args[0], err)
-	}
-	return nil
-}
-
-// gitOK reports whether a git command succeeds, discarding its output.
-func gitOK(dir string, args ...string) bool {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	return cmd.Run() == nil
-}
-
-// gitOutput returns a git command's trimmed stdout, or "" on failure.
-func gitOutput(dir string, args ...string) string {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	b, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
+	return gitx.Run(dir, "switch", "--quiet", "-c", branch)
 }

@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/chrisrob11/prfoundry/internal/itemname"
+	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
@@ -113,7 +115,7 @@ func pipelineList(ctx context.Context, c *cli.Command) error {
 
 	w := c.Root().Writer
 	if c.Bool("json") {
-		return writeJSON(w, entries)
+		return jsonio.Write(w, entries)
 	}
 	if !exists {
 		_, _ = fmt.Fprintf(w, "# %s doesn't exist; using the built-in default\n", pipeline.Path(home, repo))
@@ -150,7 +152,7 @@ func pipelineShow(ctx context.Context, c *cli.Command) error {
 			e.Error = err.Error()
 		}
 		e.Valid = e.Error == ""
-		return writeJSON(c.Root().Writer, e)
+		return jsonio.Write(c.Root().Writer, e)
 	}
 	_, err = fmt.Fprintln(c.Root().Writer, pipeline.Join(roles, "\n"))
 	return err
@@ -247,7 +249,7 @@ func pipelineDefault(ctx context.Context, c *cli.Command) error {
 // repoArg returns a valid --repo.
 func repoArg(c *cli.Command) (string, error) {
 	repo := c.String("repo")
-	if !itemName.MatchString(repo) {
+	if !itemname.Valid(repo) {
 		return "", cli.Exit(fmt.Sprintf("prf: invalid repo name %q: use letters, digits, '-', '_' and '.'", repo), exitUsage)
 	}
 	return repo, nil

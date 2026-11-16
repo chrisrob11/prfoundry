@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
@@ -228,10 +229,10 @@ func unsafeToRemove(s jobState) string {
 	if _, err := os.Stat(s.Dir); err != nil {
 		return ""
 	}
-	if gitOutput(s.Dir, "status", "--porcelain") != "" {
+	if gitx.Output(s.Dir, "status", "--porcelain") != "" {
 		return "uncommitted changes"
 	}
-	if n := gitOutput(s.Dir, "rev-list", "--count", "HEAD", "--not", "--remotes"); n != "" && n != "0" {
+	if n := gitx.Output(s.Dir, "rev-list", "--count", "HEAD", "--not", "--remotes"); n != "" && n != "0" {
 		return n + " commits not on any remote"
 	}
 	return ""

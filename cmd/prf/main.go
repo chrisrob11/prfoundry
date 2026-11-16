@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/chrisrob11/prfoundry/internal/gitx"
+	"github.com/chrisrob11/prfoundry/internal/itemname"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
@@ -278,7 +280,7 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 		url, name = repo.URL, repoArg
 	}
 
-	if !itemName.MatchString(name) {
+	if !itemname.Valid(name) {
 		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, confFile), exitUsage)
 	}
 	roles, pipelineName, err := jobRoles(c, name, true)
@@ -356,7 +358,7 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	name := firstNonEmpty(repoName, filepath.Base(dir))
-	if !itemName.MatchString(name) {
+	if !itemname.Valid(name) {
 		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, confFile), exitUsage)
 	}
 
@@ -373,7 +375,7 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
-	if !gitOK(j.dir, "rev-parse", "--is-inside-work-tree") {
+	if !gitx.OK(j.dir, "rev-parse", "--is-inside-work-tree") {
 		return cli.Exit("prf: not a git repository: "+j.dir, exitUsage)
 	}
 
@@ -387,11 +389,11 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 			return j.finish("setup", exitSetup)
 		}
 	}
-	j.branch = firstNonEmpty(gitOutput(j.dir, "branch", "--show-current"), "HEAD")
+	j.branch = firstNonEmpty(gitx.Output(j.dir, "branch", "--show-current"), "HEAD")
 	if err := j.setJobDir(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	if gitOutput(j.dir, "status", "--porcelain") != "" {
+	if gitx.Output(j.dir, "status", "--porcelain") != "" {
 		logf("warning: %s has uncommitted changes; Claude's commits may include them", j.dir)
 	}
 	j.env = miseEnv(trustedDir(j.dir, j.workdir)) // your own checkout keeps mise's trust as you set it

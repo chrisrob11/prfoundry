@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 	"github.com/urfave/cli/v3"
 )
 
@@ -63,7 +64,7 @@ func (r *repoConfig) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	type plain repoConfig
-	if err := decodeStrict(b, (*plain)(r)); err != nil {
+	if err := jsonio.DecodeStrict(b, (*plain)(r)); err != nil {
 		return fmt.Errorf("repo must be a URL string or an object with url, path, base, pr_dir: %w", err)
 	}
 	return nil
@@ -87,13 +88,6 @@ func homeDir() string {
 	return h
 }
 
-// decodeStrict decodes JSON, rejecting unknown fields so typos are caught.
-func decodeStrict(b []byte, v any) error {
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	return dec.Decode(v)
-}
-
 // readConfig parses the config at path. A missing file gives an empty config.
 func readConfig(path string) (config, error) {
 	b, err := os.ReadFile(path)
@@ -102,7 +96,7 @@ func readConfig(path string) (config, error) {
 	}
 	var c config
 	if err == nil {
-		err = decodeStrict(b, &c)
+		err = jsonio.DecodeStrict(b, &c)
 	}
 	if err != nil {
 		return config{}, fmt.Errorf("%s: %w", path, err)
@@ -155,7 +149,7 @@ func configCmd() *cli.Command {
 			for _, repo := range configuredRepos() {
 				_, _ = fmt.Fprintf(w, "# repo %s: %s\n", repo, filepath.Join(home, repo))
 			}
-			return writeJSON(w, cfg)
+			return jsonio.Write(w, cfg)
 		},
 		Commands: []*cli.Command{{
 			Name:   "init",
@@ -206,7 +200,7 @@ func initConfig(ctx context.Context, c *cli.Command) error {
 			_, _ = fmt.Fprintln(w, "exists", f[0])
 			continue
 		}
-		if err := writeFile(f[0], f[1]); err != nil {
+		if err := textfile.Write(f[0], f[1]); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintln(w, "wrote ", f[0])

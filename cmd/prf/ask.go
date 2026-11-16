@@ -10,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
 // An ask gate (@ask in a pipeline, right after a role) lets that role stop
@@ -70,14 +72,14 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 				page(pageFixing)
 				fix := data
 				fix.Question, fix.Review = last.Question, renderAnswers(*last, j.displayPath(path))
-				if err := writeFile(filepath.Join(dir, fmt.Sprintf("round-%d.md", last.Round)), fix.Review); err != nil {
+				if err := textfile.Write(filepath.Join(dir, fmt.Sprintf("round-%d.md", last.Round)), fix.Review); err != nil {
 					logf("saving the answers: %v", err)
 				}
 				if code := j.runClaude(p, p.fixRole, step, model, fix, false); code != 0 {
 					page(pageStopped)
 					return end(code, "")
 				}
-				last.Fixed, last.FixCommit, last.Summary = true, gitOutput(j.dir, "rev-parse", "HEAD"), j.lastResult.text
+				last.Fixed, last.FixCommit, last.Summary = true, gitx.Output(j.dir, "rev-parse", "HEAD"), j.lastResult.text
 				addReplies(last, j.lastResult.text)
 			} else { // re-run the step that asked
 				page(pageRerunning)
