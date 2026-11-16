@@ -100,7 +100,8 @@ func TestOpenCodeRun(t *testing.T) {
 			t.Errorf("call %d: args %q, want them to start %q", i, args, want)
 		}
 	}
-	if conf := readFile(t, e.log+".config"); !strings.Contains(conf, `{"action":"edit","resource":"*","effect":"allow"}`) || !strings.Contains(conf, `{"action":"shell","resource":"gh *","effect":"deny"}`) {
+	if conf := readFile(t, e.log+".config"); !strings.Contains(conf, `"permissions":[{"action":"*","resource":"*","effect":"ask"},`) ||
+		!strings.Contains(conf, `{"action":"edit","resource":"*","effect":"allow"}`) || !strings.Contains(conf, `{"action":"shell","resource":"gh *","effect":"deny"}`) {
 		t.Errorf("permission config for acceptEdits = %s", conf)
 	}
 	status := readFile(t, filepath.Join(jobDir, "status"))

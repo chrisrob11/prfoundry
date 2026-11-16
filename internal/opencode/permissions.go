@@ -6,8 +6,9 @@ import (
 )
 
 // rule is one of opencode's permission rules. The last rule matching an
-// action wins; an action no rule matches asks, and a headless run rejects
-// what asks, unless --auto approves it.
+// action and its resource wins, and a headless run rejects what asks,
+// unless --auto approves it. opencode puts its built-in agents' rules,
+// which start with allowing everything, before prf's.
 type rule struct {
 	Action   string `json:"action"`
 	Resource string `json:"resource"`
@@ -22,10 +23,20 @@ func allow(actions ...string) []rule {
 	return rules
 }
 
+// askFirst opens every mode's rules but bypassPermissions', overriding
+// opencode's built-in allow-everything, so what no later rule allows asks
+// and is rejected.
+var askFirst = rule{"*", "*", "ask"}
+
+// internal are opencode's own tools that touch nothing outside the run:
+// its todo list, subagents (which get these rules too) and skills. Claude
+// Code doesn't ask before its own.
+var internal = []string{"todowrite", "subagent", "skill"}
+
 // modeRules maps a Claude Code permission mode to opencode's rules, and
 // whether the run approves whatever they don't decide (--auto).
 func modeRules(mode string) ([]rule, bool, error) {
-	reads := allow("read", "glob", "grep")
+	reads := append([]rule{askFirst}, allow(append([]string{"read", "glob", "grep"}, internal...)...)...)
 	switch mode {
 	case "default", "dontAsk": // only what's allowed; anything else is refused
 		return reads, false, nil
