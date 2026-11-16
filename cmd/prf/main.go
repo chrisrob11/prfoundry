@@ -47,7 +47,7 @@ func main() {
 func newApp() *cli.Command {
 	return &cli.Command{
 		Name:  "prf",
-		Usage: "nano AI prf: run Claude through role-based phases on a repo",
+		Usage: "run many PRs at once, each through a pipeline of Claude Code roles",
 		// main prints errors and exits; the default handler would call os.Exit itself.
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
