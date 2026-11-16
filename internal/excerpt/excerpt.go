@@ -1,4 +1,6 @@
-package main
+// Package excerpt cuts a failed command's output down to what a fix role
+// needs: the failures in Go's output formats, or the output's tail.
+package excerpt
 
 import (
 	"fmt"
@@ -10,14 +12,14 @@ import (
 // end: a big test suite prints its first failure long before it finishes. So
 // a fix role gets an excerpt. For output in Go's formats (build and vet
 // errors, failed tests, panics, data races, linters' file:line reports),
-// that's just the failures, wherever they are; for anything else, the last
-// failureLines lines. The full output is saved for the fix role to read.
+// that's just the failures, wherever they are; for anything else, its tail.
+// The full output is saved for the fix role to read.
 
 // How much an excerpt keeps.
 const (
-	excerptPerBlock = 60  // lines of one failed test, panic or race report, and of errors
-	excerptBlocks   = 20  // failed tests, panics and race reports
-	excerptLines    = 400 // lines in all, from the top
+	perBlock   = 60  // lines of one failed test, panic or race report, and of errors
+	maxBlocks  = 20  // failed tests, panics and race reports
+	totalLines = 400 // lines in all, from the top
 )
 
 var (
@@ -29,9 +31,10 @@ var (
 	goroutine = regexp.MustCompile(`^goroutine \d+ \[`)
 )
 
-// excerpt returns the parts of out that say what failed, and false if out
-// isn't in a format it knows, in which case the caller falls back to its tail.
-func excerpt(out string) (string, bool) {
+// Failures returns the parts of out that say what failed, at most about
+// maxBytes long, and false if out isn't in a format it knows, in which case
+// the caller falls back to its Tail.
+func Failures(out string, maxBytes int) (string, bool) {
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 	var errs, pkgs []string
 	var blocks [][]string
@@ -40,13 +43,13 @@ func excerpt(out string) (string, bool) {
 	current := ""                 // the test whose log -v is printing
 	extra := 0                    // blocks left out
 	add := func(block []string) {
-		if len(blocks) == excerptBlocks {
+		if len(blocks) == maxBlocks {
 			extra++
 			return
 		}
-		if len(block) > excerptPerBlock {
-			n := len(block) - excerptPerBlock
-			block = append(block[:excerptPerBlock:excerptPerBlock], fmt.Sprintf("    ... %d more lines", n))
+		if len(block) > perBlock {
+			n := len(block) - perBlock
+			block = append(block[:perBlock:perBlock], fmt.Sprintf("    ... %d more lines", n))
 		}
 		blocks = append(blocks, block)
 	}
@@ -111,7 +114,7 @@ func excerpt(out string) (string, bool) {
 
 	var parts []string
 	if len(errs) > 0 {
-		shown := errs[:min(len(errs), excerptPerBlock)]
+		shown := errs[:min(len(errs), perBlock)]
 		part := strings.Join(shown, "\n")
 		if n := len(errs) - len(shown); n > 0 {
 			part += fmt.Sprintf("\n... %d more errors", n)
@@ -127,12 +130,12 @@ func excerpt(out string) (string, bool) {
 	if extra > 0 {
 		parts = append(parts, fmt.Sprintf("... %d more failures", extra))
 	}
-	return headOf(strings.Join(parts, "\n\n"), excerptLines, failureBytes), true
+	return head(strings.Join(parts, "\n\n"), totalLines, maxBytes), true
 }
 
-// headOf returns the start of s, at most maxLines lines and about maxBytes,
+// head returns the start of s, at most maxLines lines and about maxBytes,
 // saying how much it left out: an excerpt's first failures matter most.
-func headOf(s string, maxLines, maxBytes int) string {
+func head(s string, maxLines, maxBytes int) string {
 	lines := strings.Split(s, "\n")
 	kept, size := 0, 0
 	for kept < len(lines) && kept < maxLines && size+len(lines[kept])+1 <= maxBytes {
@@ -143,4 +146,20 @@ func headOf(s string, maxLines, maxBytes int) string {
 		return s
 	}
 	return strings.Join(lines[:kept], "\n") + fmt.Sprintf("\n... %d more lines", len(lines)-kept)
+}
+
+// Tail returns the end of s: its last lines, at most maxLines of them and
+// maxBytes long, and whether that left anything out.
+func Tail(s string, maxLines, maxBytes int) (string, bool) {
+	cut := false
+	if len(s) > maxBytes {
+		s, cut = s[len(s)-maxBytes:], true
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			s = s[i+1:] // from a whole line
+		}
+	}
+	if lines := strings.Split(s, "\n"); len(lines) > maxLines {
+		s, cut = strings.Join(lines[len(lines)-maxLines:], "\n"), true
+	}
+	return s, cut
 }

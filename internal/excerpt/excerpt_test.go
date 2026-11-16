@@ -1,4 +1,4 @@
-package main
+package excerpt
 
 import (
 	"fmt"
@@ -56,27 +56,27 @@ func TestExcerptKeepsTheFirstFailures(t *testing.T) {
 			fmt.Fprintf(&b, "    n_test.go:%d: detail %d\n", k, k)
 		}
 	}
-	got, _ := excerpt(b.String())
+	got, _ := Failures(b.String(), 30_000)
 	if !strings.HasPrefix(got, "app/x.go:3:1: undefined: foo") || !strings.Contains(got, "--- FAIL: Test00") {
 		t.Errorf("lost the first failures:\n%.300s", got)
 	}
-	if !strings.HasSuffix(got, "more lines") || strings.Count(got, "\n") > excerptLines {
-		t.Errorf("not capped at %d lines with a note: %d lines, ends %q", excerptLines, strings.Count(got, "\n"), got[len(got)-30:])
+	if !strings.HasSuffix(got, "more lines") || strings.Count(got, "\n") > totalLines {
+		t.Errorf("not capped at %d lines with a note: %d lines, ends %q", totalLines, strings.Count(got, "\n"), got[len(got)-30:])
 	}
-	if s := headOf("a\nb", 5, 100); s != "a\nb" {
-		t.Errorf("headOf left out nothing, but = %q", s)
+	if s := head("a\nb", 5, 100); s != "a\nb" {
+		t.Errorf("head left out nothing, but = %q", s)
 	}
-	if s := headOf("aaaa\nbbbb\ncccc", 5, 10); s != "aaaa\nbbbb\n... 1 more lines" {
-		t.Errorf("headOf by bytes = %q", s)
+	if s := head("aaaa\nbbbb\ncccc", 5, 10); s != "aaaa\nbbbb\n... 1 more lines" {
+		t.Errorf("head by bytes = %q", s)
 	}
 }
 
 func TestExcerpt(t *testing.T) {
 	var many strings.Builder
-	for i := range excerptBlocks + 3 {
+	for i := range maxBlocks + 3 {
 		fmt.Fprintf(&many, "--- FAIL: Test%d (0.00s)\n    x_test.go:%d: bad\n", i, i+1)
 	}
-	long := "--- FAIL: TestLong (0.00s)\n" + strings.Repeat("    x_test.go:1: noise\n", excerptPerBlock+10)
+	long := "--- FAIL: TestLong (0.00s)\n" + strings.Repeat("    x_test.go:1: noise\n", perBlock+10)
 
 	for _, tt := range []struct {
 		name, out string
@@ -141,8 +141,8 @@ func TestExcerpt(t *testing.T) {
 			name:  "too many failures",
 			out:   many.String(),
 			known: true,
-			want:  []string{"--- FAIL: Test0 ", fmt.Sprintf("--- FAIL: Test%d ", excerptBlocks-1), "... 3 more failures"},
-			not:   []string{fmt.Sprintf("--- FAIL: Test%d ", excerptBlocks)},
+			want:  []string{"--- FAIL: Test0 ", fmt.Sprintf("--- FAIL: Test%d ", maxBlocks-1), "... 3 more failures"},
+			not:   []string{fmt.Sprintf("--- FAIL: Test%d ", maxBlocks)},
 		},
 		{
 			name:  "a long failure is cut",
@@ -159,10 +159,10 @@ func TestExcerpt(t *testing.T) {
 		},
 		{
 			name:  "more errors than fit",
-			out:   manyErrors(excerptPerBlock + 10),
+			out:   manyErrors(perBlock + 10),
 			known: true,
-			want:  []string{"x.go:1:1: e1", fmt.Sprintf("x.go:%d:1: e%d", excerptPerBlock, excerptPerBlock), "... 10 more errors"},
-			not:   []string{fmt.Sprintf("e%d\n", excerptPerBlock+1)},
+			want:  []string{"x.go:1:1: e1", fmt.Sprintf("x.go:%d:1: e%d", perBlock, perBlock), "... 10 more errors"},
+			not:   []string{fmt.Sprintf("e%d\n", perBlock+1)},
 		},
 		{
 			name:  "a panic with no stack doesn't swallow what follows",
@@ -181,7 +181,7 @@ func TestExcerpt(t *testing.T) {
 		{name: "nothing", out: ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, known := excerpt(tt.out)
+			got, known := Failures(tt.out, 30_000)
 			if known != tt.known {
 				t.Fatalf("known = %t, want %t; excerpt:\n%s", known, tt.known, got)
 			}
@@ -199,5 +199,24 @@ func TestExcerpt(t *testing.T) {
 				t.Errorf("repeated an error:\n%s", got)
 			}
 		})
+	}
+}
+
+func TestTail(t *testing.T) {
+	for _, tt := range []struct {
+		in       string
+		lines    int
+		bytes    int
+		want     string
+		wantsCut bool
+	}{
+		{"a\nb\nc", 5, 100, "a\nb\nc", false},
+		{"a\nb\nc", 2, 100, "b\nc", true},
+		{"aaaa\nbbbb\ncc", 5, 6, "cc", true}, // from a whole line
+		{"", 5, 100, "", false},
+	} {
+		if got, cut := Tail(tt.in, tt.lines, tt.bytes); got != tt.want || cut != tt.wantsCut {
+			t.Errorf("Tail(%q, %d, %d) = %q, %t", tt.in, tt.lines, tt.bytes, got, cut)
+		}
 	}
 }

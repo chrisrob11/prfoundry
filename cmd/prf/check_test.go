@@ -243,23 +243,7 @@ func TestCheckValidation(t *testing.T) {
 	})
 }
 
-func TestTailOf(t *testing.T) {
-	for _, tt := range []struct {
-		in       string
-		lines    int
-		bytes    int
-		want     string
-		wantsCut bool
-	}{
-		{"a\nb\nc", 5, 100, "a\nb\nc", false},
-		{"a\nb\nc", 2, 100, "b\nc", true},
-		{"aaaa\nbbbb\ncc", 5, 6, "cc", true}, // from a whole line
-		{"", 5, 100, "", false},
-	} {
-		if got, cut := tailOf(tt.in, tt.lines, tt.bytes); got != tt.want || cut != tt.wantsCut {
-			t.Errorf("tailOf(%q, %d, %d) = %q, %t", tt.in, tt.lines, tt.bytes, got, cut)
-		}
-	}
+func TestWriteOutput(t *testing.T) {
 	var b strings.Builder
 	writeOutput(&b, "\n")
 	if !strings.Contains(b.String(), "printed nothing") {

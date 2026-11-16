@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/excerpt"
 )
 
 // A check gate (@check in a pipeline) runs a command in the checkout, such
@@ -215,7 +217,7 @@ func renderFailure(command string, code int, timedOut bool, timeout time.Duratio
 	default:
 		fmt.Fprintf(&b, "`%s` failed with exit code %d.\n", command, code)
 	}
-	ex, ok := excerpt(out)
+	ex, ok := excerpt.Failures(out, failureBytes)
 	if !ok || timedOut { // a timeout's clue is what it was doing last
 		writeOutput(&b, out)
 	} else {
@@ -236,7 +238,7 @@ func renderFailure(command string, code int, timedOut bool, timeout time.Duratio
 // leaving out go test's lines for passing packages and its bare FAIL and
 // PASS: "" if that's all they are.
 func unseenTail(out, ex string) string {
-	tail, _ := tailOf(strings.TrimRight(out, "\n"), 10, 2000)
+	tail, _ := excerpt.Tail(strings.TrimRight(out, "\n"), 10, 2000)
 	shown := map[string]bool{}
 	for _, l := range strings.Split(ex, "\n") {
 		shown[l] = true
@@ -347,27 +349,11 @@ func writeOutput(b *strings.Builder, out string) {
 		b.WriteString("\nIt printed nothing.\n")
 		return
 	}
-	tail, cut := tailOf(out, failureLines, failureBytes)
+	tail, cut := excerpt.Tail(out, failureLines, failureBytes)
 	if cut {
 		b.WriteString("\nThe end of its output:\n")
 	} else {
 		b.WriteString("\nIts output:\n")
 	}
 	fmt.Fprintf(b, "\n````\n%s\n````\n", tail)
-}
-
-// tailOf returns the end of s: its last lines, at most maxLines of them and
-// maxBytes long, and whether that left anything out.
-func tailOf(s string, maxLines, maxBytes int) (string, bool) {
-	cut := false
-	if len(s) > maxBytes {
-		s, cut = s[len(s)-maxBytes:], true
-		if i := strings.IndexByte(s, '\n'); i >= 0 {
-			s = s[i+1:] // from a whole line
-		}
-	}
-	if lines := strings.Split(s, "\n"); len(lines) > maxLines {
-		s, cut = strings.Join(lines[len(lines)-maxLines:], "\n"), true
-	}
-	return s, cut
 }
