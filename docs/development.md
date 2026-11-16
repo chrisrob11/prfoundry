@@ -28,7 +28,9 @@ and runs the job. Everything else is a package under `internal/`.
 | `cmd/prf/rolecmd.go`, `pipelinecmd.go` | `prf role`; `prf pipeline`, and checking a pipeline's roles |
 | `cmd/prf/indexcmd.go` | `prf index` |
 | `internal/job` | One job: `Run` (clone, then set up), `Apply` (an existing checkout), `Resume`; the phase loop and status lines (`run.go`), setup (`setup.go`), the gates (`gate_check.go`, `gate_review.go`, `gate_ask.go`), the usage-limit pause, `<job>/context`, shipping |
-| `internal/claude` | A `claude -p` call's arguments, reading its stream-json, and its usage-limit error |
+| `internal/agent` | What a job needs from a coding agent: a run's command, its output's progress and result |
+| `internal/claude` | Claude Code as an agent: a `claude -p` call's arguments, reading its stream-json, and its usage-limit error |
+| `internal/opencode` | opencode as an agent: an `opencode run --format json` call's arguments and permission config, reading its JSON events (`testdata/` holds real ones), and its usage limits |
 | `internal/state` | `state.json`: writing it, finding and listing jobs, and summing their spend |
 | `internal/review` | The review page the `@review` and `@ask` gates serve (`review.html`), and their saved rounds |
 | `internal/ship` | Pushing the branch and opening its PR |

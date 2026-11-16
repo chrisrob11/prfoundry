@@ -6,6 +6,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 )
@@ -84,6 +85,15 @@ func loadPhases(steps []pipeline.Step, dirs []string, hasWork, hasTask bool) ([]
 		phases = append(phases, p)
 	}
 	return phases, nil
+}
+
+// stepFor is s as it runs on agentName: on opencode, with its opencode_model
+// as its model.
+func stepFor(s pipeline.Step, agentName string) pipeline.Step {
+	if agentName == agent.OpenCode {
+		s.Model = s.OpenCodeModel
+	}
+	return s
 }
 
 // parseRole makes a phase of the role name with text.

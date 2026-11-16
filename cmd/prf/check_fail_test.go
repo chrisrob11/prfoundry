@@ -80,6 +80,7 @@ func TestCheckPipelineErrors(t *testing.T) {
 		{[]pipeline.Step{{Gate: pipeline.GateCheck, Run: "make", FixRole: "nope"}}, `no role "nope"`},
 		{[]pipeline.Step{{Role: "implement", MaxCost: -1}}, "max_cost can't be negative"},
 		{[]pipeline.Step{{Role: "implement", Model: "bad model"}}, "invalid model"},
+		{[]pipeline.Step{{Role: "implement", OpenCodeModel: "opus"}}, `opencode_model must be provider/model, not "opus"`},
 		{[]pipeline.Step{{Gate: pipeline.GateCheck, Run: "make", Timeout: "0s"}}, `timeout "0s" isn't a duration`},
 	} {
 		if err := checkPipeline(e.home, "origin", tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {

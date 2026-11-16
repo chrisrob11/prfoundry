@@ -37,7 +37,7 @@ For `prf run --repo app --pr login`:
    config, `mise install` runs (see [mise](sandbox.md#mise)).
 4. **Prepare context.** The [codebase map](codebase-map.md) is built and the repo's `setup`
    commands run, filling `<workdir>/app/login/context/`.
-5. **Run each role in order.** Each role is a fresh `claude -p` call in the clone, on the model
+5. **Run each role in order.** Each role is a fresh `claude -p` call (or `opencode run`; see [on opencode](#on-opencode)) in the clone, on the model
    its step names (see [which model each step uses](roles-and-pipelines.md#which-model-each-step-uses)).
    The run stops at the first role that fails: one that exits non-zero, or whose result Claude
    marks as an error, or that doesn't leave the checkout as its
@@ -79,6 +79,24 @@ these parts:
    and read unchanged code only where you need it." The report is that run's final message, kept
    in `$PRF_TMP/reports/step-N.md`. So a re-run picks up from what it did instead of starting
    over. Gates' fix roles don't get it.
+
+### On opencode
+
+With `agent: opencode` (see [the agent](configuration.md#the-agent-claude-or-opencode)), each role
+runs as:
+
+```
+opencode run --standalone --format json [--model <provider/model>] [--auto] <opencode_args> <-- args> <prompt>
+```
+
+with `PWD` set to the clone (opencode works in `$PWD`, not its working directory) and the
+permission rules for `--mode` in `OPENCODE_CONFIG_CONTENT`. The PR spec's folder, `<job>/tmp`
+and `<job>/context` are allowed as external directories. `--standalone` runs a private opencode
+server for the call, so the job's environment, such as `PRF_TMP` and mise's, reaches its shell
+commands; opencode's background service would run them in its own. `--in` reaches it on stdin,
+which opencode adds to the prompt. prf reads its JSON events: each `step_start` is a turn, `text`
+is its message, `tool_use` a tool call, `step_finish` a model call's cost, and `error` a failure.
+The final message is the last step's text.
 
 ## The job's tmp folder
 

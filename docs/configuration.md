@@ -47,10 +47,12 @@ repo whose name doesn't fit.
 | `workdir` | Where job folders and clones are created (default `~/prf-work`) |
 | `pr_dir` | Where a bare `--pr` name is looked up: `--pr login` finds `<pr_dir>/login.md` |
 | `branch_prefix` | `run` with `--pr` and no `--branch` uses `<branch_prefix><pr name>`, e.g. `prf/login` |
+| `agent` | The coding agent steps run: `"claude"` (the default) or `"opencode"`; see [the agent](#the-agent-claude-or-opencode) |
 | `mode` | Claude permission mode (default `acceptEdits`) |
 | `model` | Model for steps that don't name one, in any repo without its own `model` (default: Claude's own) |
 | `claude` | Claude binary (default `claude`) |
 | `claude_args` | Extra arguments for every Claude call, placed before anything after `--`. Use `model` rather than `--model` here, or it overrides every step's model |
+| `opencode`, `opencode_args`, `opencode_model` | opencode's binary (default `opencode`), extra arguments for every opencode call, and its model for steps that don't name one |
 | `max_cost`, `max_step_cost` | Default [cost caps](orchestrating.md#cost-caps) in USD for the whole job and for each step |
 | `sandbox` | `false` turns the [sandbox](sandbox.md) off (default on) |
 | `review_open` | `false` stops a [`@review`](gates.md#human-review) or [`@ask`](gates.md#questions-from-a-step) step from opening its page in your browser; you still get a notification (default `true`) |
@@ -62,6 +64,7 @@ A repo alias object can have:
 | Key | Meaning |
 |---|---|
 | `url` | What `run` clones |
+| `agent` | `"claude"` or `"opencode"` for this repo's jobs, over the global `agent` |
 | `path` | Your local checkout: what `apply` works in, and where `run` copies git objects from |
 | `base` | The branch to clone and branch from, and the PR's base |
 | `pr_dir` | Overrides the global `pr_dir` |
@@ -73,6 +76,38 @@ A repo alias object can have:
 
 `~` is expanded in paths. Unknown keys are an error, so a typo can't silently do nothing.
 A non-empty flag beats an env var, which beats `conf.json`, which beats the built-in default.
+
+## The agent: claude or opencode
+
+Each step runs Claude Code unless the job's agent is [opencode](https://opencode.ai): `--agent
+opencode` on `run`, `apply` or `resume`, else the repo alias's `agent`, else `conf.json`'s.
+`state.json` records it, so `resume` keeps it unless you give `--agent`. Gates and fix roles run
+on the same agent, and work the same way.
+
+```json
+{
+  "agent": "opencode",
+  "sandbox": false,
+  "mode": "bypassPermissions",
+  "opencode_model": "anthropic/claude-sonnet-5-5"
+}
+```
+
+What differs on opencode:
+
+| Setting | On opencode |
+|---|---|
+| Models | `opencode_model` (conf.json, pipeline.json, a step) and `--model` are `provider/model`, as `opencode models` lists them. `model` and `--role role:model` name Claude models: a step's `model` is ignored, and `--role role:model` is refused |
+| `--sandbox` | Refused: opencode has no sandbox. Run it with `--sandbox=false` or `"sandbox": false`, so `@check` commands run unsandboxed too |
+| `--mode` | Mapped to opencode's permission rules: `default` and `dontAsk` allow reads only, `acceptEdits` reads and edits, `plan` reads and denies edits and shell commands, and `bypassPermissions` approves everything else (`--auto`). What a mode doesn't allow, such as a shell command under `acceptEdits`, opencode refuses, since nobody can approve it; to let a step run the tests, use `bypassPermissions`. `auto` is refused. In every mode `git push`, `gh` and writing opencode's own config are denied |
+| Budgets | opencode has no budget of its own: prf adds up the cost opencode reports after each model call and stops the run (exit 5) once it reaches the step's budget, so a step can overshoot by one call. A model opencode prices at $0, like a subscription or a local one, is never stopped. opencode doesn't always report its last call, so costs can be low by one call |
+| Usage limits | A rate limit, or a workspace's usage limit, pauses the job like Claude's: until the time opencode gives, or 30 minutes. A free-tier or per-model spend limit fails the step, since waiting won't help |
+| Logs | `claude.log` and `claude.jsonl` hold opencode's steps and events too |
+
+`opencode_args` and anything after `--` go to `opencode run`: `["--agent", "plan"]` picks an
+opencode agent. A repo's own `opencode.json` still applies. prf's permission rules come after its
+top-level `permissions`, but an agent's own `permissions` there come later still and win, so
+check a repo's `opencode.json` before running it.
 
 ## pipeline.json
 
@@ -105,6 +140,7 @@ each step uses, and how to prepare a fresh checkout:
 | `pipelines` | Named lists of steps, run in order. A step is a role name, or `{"role": ..., "model": ..., "expect": ...}` to pick its model or what it must leave behind, or a [`@review`](gates.md#human-review), [`@ask`](gates.md#questions-from-a-step) or [`@check`](gates.md#checks) gate |
 | `default` | The pipeline that runs when `--pipeline` isn't given |
 | `model` | Model for this repo's steps that don't name one (overrides `conf.json`'s `model`) |
+| `opencode_model` | The same for opencode, as `provider/model`. A step object can set its own `opencode_model` too |
 | `expect` | What this repo's role steps must leave behind, unless a step object sets its own `expect`: `"commits"`, `"read-only"` or `"clean"` (see [what a step must leave behind](roles-and-pipelines.md#what-a-step-must-leave-behind)). Default: no check |
 | `max_cost`, `max_step_cost` | This repo's [cost caps](orchestrating.md#cost-caps), overriding `conf.json`'s. A step object can set its own `max_cost` too |
 | `index` | `false` skips the built-in [codebase map](codebase-map.md) (default `true`) |
@@ -123,6 +159,7 @@ saving.
 | `PRF_HOME` | The prf home (same as `--home`) |
 | `PRF_WORKDIR` | Where job folders go (same as `--workdir`) |
 | `CLAUDE_BIN` | The Claude binary (same as `--claude`) |
+| `OPENCODE_BIN` | The opencode binary (same as `--opencode`) |
 
 Every step gets `PRF_TMP`, the job's [tmp folder](how-it-works.md#the-jobs-tmp-folder).
 
