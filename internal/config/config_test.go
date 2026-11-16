@@ -76,6 +76,9 @@ func TestReadConfigErrors(t *testing.T) {
 		{"disk percent negative", `{"max_disk_percent": -1}`, "max_disk_percent must be between 0 (off) and 100, not -1"},
 		{"bad pr_create", `{"repos": {"app": {"pr_create": "maybe"}}}`, `pr_create must be "draft" or "ready"`},
 		{"bad model", `{"model": "bad model"}`, `invalid model "bad model"`},
+		{"bad agent", `{"agent": "codex"}`, `agent must be "claude" or "opencode", not "codex"`},
+		{"bad repo agent", `{"repos": {"app": {"agent": "Claude"}}}`, `repo app: agent must be`},
+		{"bad opencode_model", `{"opencode_model": "sonnet"}`, `opencode_model must be provider/model, not "sonnet"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

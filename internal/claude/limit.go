@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/agent"
 )
 
 // limitRe matches Claude's usage-limit error, e.g. "You've hit your 5-hour
@@ -16,10 +18,10 @@ var limitRe = regexp.MustCompile(`(?i)hit your [^·]*limit(?:.*?resets (?:([a-z]
 // limitFallback is how long to pause when the error names no reset time.
 const limitFallback = 30 * time.Minute
 
-// LimitReset reports whether r is Claude's usage-limit error and, if so,
+// limitReset reports whether r is Claude's usage-limit error and, if so,
 // when the limit resets: the time it names, or limitFallback from now when
 // it names none it can be read as.
-func (r Result) LimitReset(now time.Time) (time.Time, bool) {
+func limitReset(r agent.Result, now time.Time) (time.Time, bool) {
 	if !r.IsError {
 		return time.Time{}, false
 	}
