@@ -137,7 +137,7 @@ func listen(port, saved int) (net.Listener, error) {
 
 // routes are the pages and the JSON API, all under prefix. Anything else,
 // including every path without the token, is the mux's 404.
-func (s *Server) routes(prefix string) http.Handler {
+func (s *Server) routes(prefix string) *http.ServeMux {
 	mux := http.NewServeMux()
 	page := func(body []byte, kind string) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {

@@ -56,28 +56,28 @@ func newApp(stderr io.Writer, rt job.Runtime) *cli.Command {
 		},
 		Before: a.loadConfig,
 		Commands: []*cli.Command{
-			{
+			withPhaseFlags(&cli.Command{
 				Name:      "run",
 				Usage:     "clone a repo into <workdir>/<repo>/<job>/repo, switch to a branch, and run Claude phases on it",
 				ArgsUsage: "[-- extra claude args]",
-				Flags: append([]cli.Flag{
+				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "repo", Usage: "repo URL, path, or alias from conf.json (required)"},
 					&cli.StringFlag{Name: "branch", Usage: "branch to create or switch to (default: <branch_prefix><pr name>)"},
 					&cli.StringFlag{Name: "base", Usage: "branch to clone from (default: remote default)"},
-				}, phaseFlags("the repo's default pipeline")...),
+				},
 				Action: a.runCmd,
-			},
-			{
+			}, "the repo's default pipeline"),
+			withPhaseFlags(&cli.Command{
 				Name:      "apply",
 				Usage:     "run Claude phases in an existing local repo",
 				ArgsUsage: "[-- extra claude args]",
-				Flags: append([]cli.Flag{
+				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "repo", Usage: "repo name (an alias from conf.json works in its path); with --dir, says which repo's pipelines and roles to use (default: the folder name)"},
 					&cli.StringFlag{Name: "dir", Value: ".", Usage: "existing repo to work in"},
 					&cli.StringFlag{Name: "branch", Usage: "switch to this branch first, creating it if needed (default: stay on the current branch)"},
-				}, phaseFlags("none; just --prompt")...),
+				},
 				Action: a.applyCmd,
-			},
+			}, "none; just --prompt"),
 			a.statusCmd(),
 			a.uiCmd(),
 			a.costsCmd(),
@@ -100,9 +100,10 @@ func newApp(stderr io.Writer, rt job.Runtime) *cli.Command {
 	}
 }
 
-// phaseFlags are the flags shared by run and apply.
-func phaseFlags(defaultPipeline string) []cli.Flag {
-	return []cli.Flag{
+// withPhaseFlags adds the flags run and apply share to cmd, describing
+// --pipeline's default as defaultPipeline.
+func withPhaseFlags(cmd *cli.Command, defaultPipeline string) *cli.Command {
+	cmd.Flags = append(cmd.Flags,
 		&cli.StringFlag{Name: "pr", Usage: "PR spec file; a bare name is also looked up in pr_dir"},
 		&cli.StringFlag{Name: "prompt", Usage: "task for Claude; with no --role it is the whole prompt, otherwise it is given to each role"},
 		&cli.StringFlag{Name: "pipeline", Usage: "pipeline from ~/.prf/<repo>/" + pipeline.FileName + " to run (default: " + defaultPipeline + ")"},
@@ -123,11 +124,12 @@ func phaseFlags(defaultPipeline string) []cli.Flag {
 		agentFlag("(default: the repo alias's agent, else conf.json's, else claude)"),
 		&cli.StringFlag{Name: "claude", Value: "claude", Sources: cli.EnvVars("CLAUDE_BIN"), Usage: "claude binary"},
 		&cli.StringFlag{Name: "opencode", Value: "opencode", Sources: cli.EnvVars("OPENCODE_BIN"), Usage: "opencode binary"},
-	}
+	)
+	return cmd
 }
 
 // agentFlag is --agent, with its default described by def.
-func agentFlag(def string) cli.Flag {
+func agentFlag(def string) *cli.StringFlag {
 	return &cli.StringFlag{Name: "agent", Usage: "the coding agent each step runs: " + agent.Claude + " or " + agent.OpenCode + " " + def}
 }
 
