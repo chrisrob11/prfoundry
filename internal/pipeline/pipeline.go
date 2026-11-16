@@ -4,12 +4,10 @@
 package pipeline
 
 import (
-	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -20,6 +18,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/jsonio"
 )
 
 // FileName is the file that holds a repo's pipelines: <home>/<repo>/pipeline.json.
@@ -124,7 +123,7 @@ func (s *Step) UnmarshalJSON(b []byte) error {
 		return nil
 	}
 	type plain Step
-	if err := decodeStrict(b, (*plain)(s)); err != nil {
+	if err := jsonio.DecodeStrict(b, (*plain)(s)); err != nil {
 		return fmt.Errorf(`a step is "role", "@review", "@ask", "@check", {"role": "...", "model": "...", "max_cost": ..., "expect": "..."}, {"gate": "review", "fix_role": "...", "max_rounds": ...}, {"gate": "ask", "question": "...", ...} or {"gate": "check", "run": "...", "timeout": "10m", ...}: %w`, err)
 	}
 	return nil
@@ -191,7 +190,7 @@ func Read(home, repo string) (p File, exists bool, err error) {
 		return File{Default: "default", Pipelines: map[string][]Step{"default": Builtin()}}, false, nil
 	}
 	if err == nil {
-		err = decodeStrict(b, &p)
+		err = jsonio.DecodeStrict(b, &p)
 	}
 	if err != nil {
 		return File{}, false, fmt.Errorf("%s: %w", path, err)
@@ -211,7 +210,7 @@ func Read(home, repo string) (p File, exists bool, err error) {
 // Write replaces repo's pipeline.json, under home, with p.
 func Write(home, repo string, p File) error {
 	var b strings.Builder
-	if err := writeJSON(&b, p); err != nil {
+	if err := jsonio.Write(&b, p); err != nil {
 		return err
 	}
 	return atomicfile.Write(Path(home, repo), []byte(b.String()))
@@ -316,18 +315,4 @@ func ParseSteps(text string) ([]Step, error) {
 		}
 	}
 	return steps, nil
-}
-
-// decodeStrict decodes JSON b into v, refusing unknown fields.
-func decodeStrict(b []byte, v any) error {
-	dec := json.NewDecoder(bytes.NewReader(b))
-	dec.DisallowUnknownFields()
-	return dec.Decode(v)
-}
-
-// writeJSON writes v to w as indented JSON.
-func writeJSON(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
 }

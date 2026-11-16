@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 )
@@ -337,9 +338,6 @@ func TestCheckGateHangup(t *testing.T) {
 
 func TestCheckPipelineErrors(t *testing.T) {
 	e := checkEnv(t, `"review"`, "")
-	prev := home
-	home = e.home
-	t.Cleanup(func() { home = prev })
 	for _, tt := range []struct {
 		steps []pipeline.Step
 		want  string
@@ -349,7 +347,7 @@ func TestCheckPipelineErrors(t *testing.T) {
 		{[]pipeline.Step{{Role: "implement", Model: "bad model"}}, "invalid model"},
 		{[]pipeline.Step{{Gate: pipeline.GateCheck, Run: "make", Timeout: "0s"}}, `timeout "0s" isn't a duration`},
 	} {
-		if err := checkPipeline("origin", tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
+		if err := checkPipeline(e.home, "origin", tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("checkPipeline(%+v) = %v, want %q", tt.steps, err, tt.want)
 		}
 	}
@@ -389,7 +387,7 @@ func TestRealSRT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := homeDir()
+	home := config.ExpandHome("~")
 	out, code, err := j.runCommand(`echo "tmp=$TMPDIR task=$PRF_TMP"
 touch ok && echo checkout-writable
 touch "$TMPDIR/x" && echo tmp-writable

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/sandbox"
 )
 
 // fakeSRT records its arguments, and the TMPDIR it got, in $FAKE_SRT_LOG,
@@ -321,8 +322,8 @@ func TestCheckSandbox(t *testing.T) {
 
 	t.Run("so does one whose Claude settings turn the sandbox off", func(t *testing.T) {
 		removeFile(t, srtLog)
-		writeFileT(t, filepath.Join(e.home, "origin", settingsFile), `{"sandbox": {"enabled": false}}`)
-		defer removeFile(t, filepath.Join(e.home, "origin", settingsFile))
+		writeFileT(t, filepath.Join(e.home, "origin", sandbox.SettingsFile), `{"sandbox": {"enabled": false}}`)
+		defer removeFile(t, filepath.Join(e.home, "origin", sandbox.SettingsFile))
 		if code := e.run(t, "run", "--repo", e.origin, "--branch", "d", "--prompt", "x"); code != 0 {
 			t.Fatalf("exit %d", code)
 		}
@@ -332,8 +333,8 @@ func TestCheckSandbox(t *testing.T) {
 	})
 
 	t.Run("unreadable Claude settings stop the gate", func(t *testing.T) {
-		writeFileT(t, filepath.Join(e.home, "origin", settingsFile), `{oops`)
-		defer removeFile(t, filepath.Join(e.home, "origin", settingsFile))
+		writeFileT(t, filepath.Join(e.home, "origin", sandbox.SettingsFile), `{oops`)
+		defer removeFile(t, filepath.Join(e.home, "origin", sandbox.SettingsFile))
 		if code := e.run(t, "run", "--repo", e.origin, "--branch", "e", "--prompt", "x"); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
 		}
@@ -376,5 +377,28 @@ func TestRenderFailure(t *testing.T) {
 	got = renderFailure("go test ./...", 124, true, time.Minute, goOut+"=== RUN TestSlow\n", "")
 	if !strings.Contains(got, "didn't finish within 1m0s") || !strings.Contains(got, "=== RUN TestSlow") {
 		t.Errorf("a timeout shows the end of the output:\n%s", got)
+	}
+}
+
+// The @check gate's srt sandbox may write where Claude's may.
+func TestCheckSandboxJobWriteDirs(t *testing.T) {
+	withFakeSRT(t)
+	dir := t.TempDir()
+	settings := filepath.Join(dir, sandbox.SettingsFile)
+	writeFileT(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": ["/shared/go-build"]}}}`)
+	j := job{jobDir: dir, dir: filepath.Join(dir, "repo"), tmp: filepath.Join(dir, "tmp"), settings: settings,
+		writeDirs: []string{filepath.Join(dir, "cache", "a"), filepath.Join(dir, "cache", "b")}}
+
+	path, err := j.checkSandbox("/check-tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s srtSettings
+	if err := json.Unmarshal([]byte(readFile(t, path)), &s); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{j.dir, j.tmp, "/check-tmp", j.writeDirs[0], j.writeDirs[1], "/shared/go-build"}
+	if !slices.Equal(s.Filesystem.AllowWrite, want) {
+		t.Errorf("allowWrite = %v, want %v", s.Filesystem.AllowWrite, want)
 	}
 }

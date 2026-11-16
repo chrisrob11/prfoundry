@@ -15,7 +15,6 @@ import (
 	"go/token"
 	"maps"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -24,6 +23,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/chrisrob11/prfoundry/internal/gitx"
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
 // maxLayoutDepth is how deep the layout section goes; the package list
@@ -54,7 +56,7 @@ type goType struct {
 // so build output and ignored files are left out.
 func Build(dir, name, branch, contextDir string) error {
 	// NUL-separated, so file names with spaces survive.
-	files := strings.Split(strings.TrimRight(gitOutput(dir, "ls-files", "-z"), "\x00"), "\x00")
+	files := strings.Split(strings.TrimRight(gitx.Output(dir, "ls-files", "-z"), "\x00"), "\x00")
 	if files[0] == "" {
 		return fmt.Errorf("git ls-files found no tracked files in %s", dir)
 	}
@@ -71,7 +73,7 @@ func Build(dir, name, branch, contextDir string) error {
 	b.WriteString(keyFilesSection(dir, files, mods))
 	b.WriteString(layoutSection(files))
 	b.WriteString(<-commits)
-	if err := writeFile(filepath.Join(contextDir, "index.md"), b.String()); err != nil {
+	if err := textfile.Write(filepath.Join(contextDir, "index.md"), b.String()); err != nil {
 		return err
 	}
 	if err := writeSymbols(contextDir, pkgs); err != nil {
@@ -169,7 +171,7 @@ func writeSymbols(contextDir string, pkgs []goPkg) error {
 		fmt.Fprintf(&b, "[%d,%d,%s]", ids[r.file], r.line, decl)
 	}
 	b.WriteString("\n]\n}\n")
-	return writeFile(filepath.Join(contextDir, symbolsFile), b.String())
+	return textfile.Write(filepath.Join(contextDir, symbolsFile), b.String())
 }
 
 // oneLineDecl folds a declaration printed over several lines onto one, so a
@@ -586,7 +588,7 @@ func layoutSection(files []string) string {
 }
 
 func commitsSection(dir string) string {
-	log := gitOutput(dir, "log", "-10", "--date=short", "--format=- %h %ad %s")
+	log := gitx.Output(dir, "log", "-10", "--date=short", "--format=- %h %ad %s")
 	if log == "" {
 		return ""
 	}
@@ -601,23 +603,4 @@ func firstSentence(doc string) string {
 		s = s[:i+1]
 	}
 	return s
-}
-
-// gitOutput runs git in dir and returns its trimmed output, or "" if it fails.
-func gitOutput(dir string, args ...string) string {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	b, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
-// writeFile writes s to path, making its folder first.
-func writeFile(path, s string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(s), 0o644)
 }

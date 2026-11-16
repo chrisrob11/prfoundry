@@ -18,6 +18,8 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/excerpt"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/sandbox"
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
 // A check gate (@check in a pipeline) runs a command in the checkout, such
@@ -89,7 +91,7 @@ func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
 		start := time.Now()
 		out, code, err := j.runCommand(command, p.timeout, run)
 		logFile := filepath.Join(dir, fmt.Sprintf("round-%d.log", round))
-		if werr := writeFile(logFile, out); werr != nil {
+		if werr := textfile.Write(logFile, out); werr != nil {
 			logf("saving the output: %v", werr)
 		}
 		timedOut := errors.Is(err, context.DeadlineExceeded)
@@ -124,13 +126,13 @@ func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
 		full := ""
 		if j.tmp != "" { // where the fix role can read it
 			full = filepath.Join(j.tmp, fmt.Sprintf("check-%s-round-%d.log", n, round))
-			if err := writeFile(full, out); err != nil {
+			if err := textfile.Write(full, out); err != nil {
 				logf("saving the output: %v", err)
 				full = ""
 			}
 		}
 		data.Review = renderFailure(command, code, timedOut, p.timeout, out, full)
-		if err := writeFile(filepath.Join(dir, fmt.Sprintf("round-%d.md", round)), data.Review); err != nil {
+		if err := textfile.Write(filepath.Join(dir, fmt.Sprintf("round-%d.md", round)), data.Review); err != nil {
 			logf("saving the failure: %v", err)
 		}
 		if code := j.runClaude(p, p.fixRole, step, model, data, false); code != 0 {
@@ -293,10 +295,10 @@ func (j *job) checkSandbox(tmp string) (string, error) {
 		Sandbox *struct {
 			Enabled                      bool               `json:"enabled"`
 			EnableWeakerNetworkIsolation bool               `json:"enableWeakerNetworkIsolation"`
-			Network                      networkSettings    `json:"network"`
-			Filesystem                   filesystemSettings `json:"filesystem"`
+			Network                      sandbox.Network    `json:"network"`
+			Filesystem                   sandbox.Filesystem `json:"filesystem"`
 		} `json:"sandbox"`
-		Permissions permissionsSettings `json:"permissions"`
+		Permissions sandbox.Permissions `json:"permissions"`
 	}
 	if err := json.Unmarshal(b, &claude); err != nil {
 		return "", fmt.Errorf("reading %s: %w", j.settings, err)
@@ -327,7 +329,7 @@ func (j *job) checkSandbox(tmp string) (string, error) {
 	s.EnableWeakerNetworkIsolation = claude.Sandbox.EnableWeakerNetworkIsolation
 	out, _ := json.MarshalIndent(s, "", "  ")
 	path := filepath.Join(j.jobDir, "check-sandbox.json") // outside what the command may write
-	return path, writeFile(path, string(append(out, '\n')))
+	return path, textfile.Write(path, string(append(out, '\n')))
 }
 
 // permissionPath returns the path of a permission rule for tool, such as

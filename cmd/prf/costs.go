@@ -4,15 +4,16 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"text/tabwriter"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/urfave/cli/v3"
 )
 
-func costsCmd() *cli.Command {
+func (a *app) costsCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "costs",
 		Usage: "sum what each role has cost across jobs, by role and model, most expensive first",
@@ -21,12 +22,12 @@ func costsCmd() *cli.Command {
 			"Jobs that ran before prf recorded spend count in the total only.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "repo", Usage: "only this repo's jobs"},
-			&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
+			&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
 			&cli.DurationFlag{Name: "since", Usage: "only jobs active in this long, e.g. 48h (default: every job)"},
 			&cli.BoolFlag{Name: "json", Usage: "print JSON"},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
-			states, err := readJobStates(flagOr(c, "workdir", cfg.Workdir), c.String("repo"))
+			states, err := readJobStates(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 			if err != nil {
 				return cli.Exit("prf: "+err.Error(), exitUsage)
 			}
@@ -36,7 +37,7 @@ func costsCmd() *cli.Command {
 				if rows == nil {
 					rows = []roleSpend{}
 				}
-				return writeJSON(w, rows)
+				return jsonio.Write(w, rows)
 			}
 			if total == 0 {
 				_, _ = fmt.Fprintln(w, "no spend recorded")

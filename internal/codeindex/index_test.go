@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
 // newGoRepo makes a small committed Go module plus an untracked file.
@@ -300,7 +302,7 @@ func mustGit(t *testing.T, dir string, args ...string) {
 
 func writeFileT(t *testing.T, path, s string) {
 	t.Helper()
-	if err := writeFile(path, s); err != nil {
+	if err := textfile.Write(path, s); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -9,10 +9,18 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/gitx"
+	"github.com/chrisrob11/prfoundry/internal/itemname"
+	"github.com/chrisrob11/prfoundry/internal/jobenv"
+	"github.com/chrisrob11/prfoundry/internal/mise"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/sandbox"
 	"github.com/urfave/cli/v3"
 )
 
@@ -45,15 +53,16 @@ func main() {
 }
 
 func newApp() *cli.Command {
+	a := &app{}
 	return &cli.Command{
 		Name:  "prf",
 		Usage: "run many PRs at once, each through a pipeline of Claude Code roles",
 		// main prints errors and exits; the default handler would call os.Exit itself.
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "home", Value: defaultHome(), Sources: cli.EnvVars("PRF_HOME"), Usage: "prf home: conf.json, shared roles/, and a folder per repo with its pipeline.json and roles/"},
+			&cli.StringFlag{Name: "home", Value: config.DefaultHome(), Sources: cli.EnvVars("PRF_HOME"), Usage: "prf home: conf.json, shared roles/, and a folder per repo with its pipeline.json and roles/"},
 		},
-		Before: loadConfig,
+		Before: a.loadConfig,
 		Commands: []*cli.Command{
 			{
 				Name:      "run",
@@ -64,7 +73,7 @@ func newApp() *cli.Command {
 					&cli.StringFlag{Name: "branch", Usage: "branch to create or switch to (default: <branch_prefix><pr name>)"},
 					&cli.StringFlag{Name: "base", Usage: "branch to clone from (default: remote default)"},
 				}, phaseFlags("the repo's default pipeline")...),
-				Action: runCmd,
+				Action: a.runCmd,
 			},
 			{
 				Name:      "apply",
@@ -75,14 +84,14 @@ func newApp() *cli.Command {
 					&cli.StringFlag{Name: "dir", Value: ".", Usage: "existing repo to work in"},
 					&cli.StringFlag{Name: "branch", Usage: "switch to this branch first, creating it if needed (default: stay on the current branch)"},
 				}, phaseFlags("none; just --prompt")...),
-				Action: applyCmd,
+				Action: a.applyCmd,
 			},
-			statusCmd(),
-			costsCmd(),
-			resumeCmd(),
-			cleanCmd(),
-			roleCmd(),
-			pipelineCmd(),
+			a.statusCmd(),
+			a.costsCmd(),
+			a.resumeCmd(),
+			a.cleanCmd(),
+			a.roleCmd(),
+			a.pipelineCmd(),
 			{
 				Name:  "index",
 				Usage: "build the codebase map for a checkout, without running Claude (to preview what roles are given)",
@@ -92,7 +101,7 @@ func newApp() *cli.Command {
 				},
 				Action: indexCmd,
 			},
-			configCmd(),
+			a.configCmd(),
 		},
 	}
 }
@@ -109,14 +118,14 @@ func phaseFlags(defaultPipeline string) []cli.Flag {
 		&cli.StringFlag{Name: "pr-create", Usage: "after pushing, open a PR: draft, ready, or none (default: the repo alias's pr_create); implies --push"},
 		&cli.Float64Flag{Name: "max-cost", Usage: "stop the job once it has spent this many USD (default: pipeline.json's max_cost, else conf.json's, else no cap)"},
 		&cli.Float64Flag{Name: "max-step-cost", Usage: "budget in USD for every step, overriding each step's max_cost (default: the step's, else pipeline.json's max_step_cost, else conf.json's, else no cap)"},
-		&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "base directory for job folders: <workdir>/<repo>/<job>/ (default: conf.json's workdir, else this)"},
+		&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "base directory for job folders: <workdir>/<repo>/<job>/ (default: conf.json's workdir, else this)"},
 		&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "also print each step Claude takes (files read, commands run, edits, messages) as it happens"},
 		&cli.StringFlag{Name: "out", Usage: "write Claude's step-by-step log to this file instead of <job>/claude.log, and don't print its summaries to stdout"},
 		&cli.StringFlag{Name: "in", Usage: "extra context on Claude's stdin: a file (sent to every phase), or a fifo or '-' (first phase only)"},
 		&cli.StringFlag{Name: "status", Usage: "append status lines to this file (default: <job>/status)"},
 		&cli.StringFlag{Name: "mode", Value: "acceptEdits", Usage: "Claude permission mode"},
 		&cli.BoolFlag{Name: "review-open", Value: true, Usage: "at a @review or @ask gate, open its page in your browser (--review-open=false only notifies; default: conf.json's review_open, else true)"},
-		&cli.BoolFlag{Name: "sandbox", Value: true, Usage: "run Claude in Claude Code's sandbox, with ~/.prf/[<repo>/]" + settingsFile + " (--sandbox=false turns it off)"},
+		&cli.BoolFlag{Name: "sandbox", Value: true, Usage: "run Claude in Claude Code's sandbox, with ~/.prf/[<repo>/]" + sandbox.SettingsFile + " (--sandbox=false turns it off)"},
 		&cli.StringFlag{Name: "claude", Value: "claude", Sources: cli.EnvVars("CLAUDE_BIN"), Usage: "claude binary"},
 	}
 }
@@ -131,7 +140,9 @@ func logf(format string, args ...any) {
 // job is everything one prf invocation needs, after flags, env, and the
 // config file have been merged.
 type job struct {
-	name         string // short repo name
+	home         string        // the prf home dir
+	cfg          config.Config // conf.json
+	name         string        // short repo name
 	workdir      string
 	jobDir       string // <workdir>/<name>/<pr or branch>/: holds status and logs
 	dir          string // where Claude runs
@@ -185,10 +196,12 @@ type job struct {
 }
 
 // newJob fills in the settings shared by run and apply.
-func newJob(c *cli.Command, repo repoConfig, roles []pipeline.Step) job {
+func (a *app) newJob(c *cli.Command, repo config.Repo, roles []pipeline.Step) job {
 	return job{
+		home:       a.home,
+		cfg:        a.cfg,
 		pr:         c.String("pr"),
-		prDir:      firstNonEmpty(repo.PRDir, cfg.PRDir),
+		prDir:      firstNonEmpty(repo.PRDir, a.cfg.PRDir),
 		task:       c.String("prompt"),
 		roles:      roles,
 		verbose:    c.Bool("verbose"),
@@ -196,20 +209,20 @@ func newJob(c *cli.Command, repo repoConfig, roles []pipeline.Step) job {
 		stepCost:   c.Float64("max-step-cost"),
 		stdout:     c.Root().Writer,
 		in:         c.String("in"),
-		mode:       flagOr(c, "mode", cfg.Mode),
-		claude:     resolveBinary(flagOr(c, "claude", cfg.Claude)),
-		claudeArgs: append(append([]string{}, cfg.ClaudeArgs...), c.Args().Slice()...),
-		reviewOpen: reviewOpen(c),
+		mode:       flagOr(c, "mode", a.cfg.Mode),
+		claude:     resolveBinary(flagOr(c, "claude", a.cfg.Claude)),
+		claudeArgs: append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Slice()...),
+		reviewOpen: a.reviewOpen(c),
 	}
 }
 
 // reviewOpen reports whether a review gate opens its page in the browser:
 // --review-open if given, else conf.json's review_open, else true.
-func reviewOpen(c *cli.Command) bool {
+func (a *app) reviewOpen(c *cli.Command) bool {
 	if c.IsSet("review-open") {
 		return c.Bool("review-open")
 	}
-	return cfg.ReviewOpen == nil || *cfg.ReviewOpen
+	return a.cfg.ReviewOpen == nil || *a.cfg.ReviewOpen
 }
 
 // prepare resolves the PR file and loads every role before any git work
@@ -220,7 +233,7 @@ func (j *job) prepare() ([]phase, error) {
 		return nil, err
 	}
 	j.pr = pr
-	phases, err := loadPhases(j.roles, roleDirs(j.name), j.pr != "" || j.task != "", j.task != "")
+	phases, err := loadPhases(j.roles, roles.Dirs(j.home, j.name), j.pr != "" || j.task != "", j.task != "")
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +244,7 @@ func (j *job) prepare() ([]phase, error) {
 // is one and the branch otherwise, points --out and --status into it unless
 // they were given, and finds the Claude settings file.
 func (j *job) setJobDir(c *cli.Command) error {
-	workdir, err := filepath.Abs(flagOr(c, "workdir", cfg.Workdir))
+	workdir, err := filepath.Abs(flagOr(c, "workdir", j.cfg.Workdir))
 	if err != nil {
 		return err
 	}
@@ -251,26 +264,26 @@ func (j *job) setJobDir(c *cli.Command) error {
 
 // useSandbox picks the Claude settings file, unless the sandbox is off.
 func (j *job) useSandbox(c *cli.Command) error {
-	sandbox := cfg.Sandbox == nil || *cfg.Sandbox
+	on := j.cfg.Sandbox == nil || *j.cfg.Sandbox
 	if c.IsSet("sandbox") {
-		sandbox = c.Bool("sandbox")
+		on = c.Bool("sandbox")
 	}
 	j.settings = ""
-	if !sandbox {
+	if !on {
 		return nil
 	}
 	var err error
-	j.settings, err = settingsPath(j.name)
+	j.settings, err = sandbox.SettingsPath(j.home, j.name, logf)
 	return err
 }
 
-func runCmd(ctx context.Context, c *cli.Command) error {
+func (a *app) runCmd(ctx context.Context, c *cli.Command) error {
 	repoArg := c.String("repo")
 	if repoArg == "" {
 		return cli.Exit("prf: --repo is required", exitUsage)
 	}
 	url, name := repoArg, strings.TrimSuffix(filepath.Base(repoArg), ".git")
-	repo, isAlias := cfg.Repos[repoArg]
+	repo, isAlias := a.cfg.Repos[repoArg]
 	if isAlias {
 		if repo.URL == "" {
 			return cli.Exit(fmt.Sprintf("prf: repo alias %q has no url", repoArg), exitUsage)
@@ -278,14 +291,14 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 		url, name = repo.URL, repoArg
 	}
 
-	if !itemName.MatchString(name) {
-		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, confFile), exitUsage)
+	if !itemname.Valid(name) {
+		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, config.FileName), exitUsage)
 	}
-	roles, pipelineName, err := jobRoles(c, name, true)
+	roles, pipelineName, err := jobRoles(c, a.home, name, true)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
-	j := newJob(c, repo, roles)
+	j := a.newJob(c, repo, roles)
 	j.name, j.pipeline = name, pipelineName
 	if err := j.applyRepoDefaults(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
@@ -300,20 +313,20 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 		if j.pr == "" {
 			return cli.Exit("prf: --branch is required without --pr", exitUsage)
 		}
-		j.branch = cfg.BranchPrefix + strings.TrimSuffix(filepath.Base(j.pr), ".md")
+		j.branch = a.cfg.BranchPrefix + strings.TrimSuffix(filepath.Base(j.pr), ".md")
 	}
 	if err := j.setJobDir(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	j.dir = filepath.Join(j.jobDir, "repo")
 	// Clones under workdir are ours, so mise may trust their config files.
-	j.env = miseEnv(j.workdir)
+	j.env = mise.Env(j.workdir)
 
 	// An earlier job's folder is left alone: its status and state stay as they were.
 	if _, err := os.Stat(j.dir); err == nil {
 		return cli.Exit(fmt.Sprintf("prf: %s already exists from an earlier job; remove %s to start over, or resume it with prf apply --repo %s --dir %s", j.dir, j.jobDir, j.name, j.dir), exitSetup)
 	}
-	if err := checkDisk(j.workdir, cfg.MaxDisk); err != nil {
+	if err := checkDisk(j.workdir, a.cfg.MaxDisk); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	j.setupStage("cloning")
@@ -321,16 +334,20 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 		logf("%v", err)
 		return j.finish("setup", exitSetup)
 	}
-	if err := writeJobEnv(j.jobDir, j.name, repo.JobEnv); err != nil {
+	if err := jobenv.Write(j.jobDir, j.name, repo.JobEnv); err != nil {
 		logf("writing the job's mise.toml: %v", err)
 		return j.finish("setup", exitSetup)
 	}
 	if len(repo.JobSeed) > 0 {
 		j.setupStage("seeding the job folder")
-		seedJob(j.jobDir, repo.JobSeed)
+		seeds := slices.Clone(repo.JobSeed)
+		for i := range seeds {
+			seeds[i].From = config.ExpandHome(seeds[i].From)
+		}
+		jobenv.Copy(j.jobDir, seeds, logf)
 	}
 	j.setupStage("installing tools")
-	installTools(j.dir, j.env)
+	mise.Install(j.dir, j.env, logf)
 	if err := j.prepareContext(); err != nil {
 		logf("%v", err)
 		return j.finish("setup", exitSetup)
@@ -338,16 +355,16 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 	return j.runPhases(phases)
 }
 
-func applyCmd(ctx context.Context, c *cli.Command) error {
+func (a *app) applyCmd(ctx context.Context, c *cli.Command) error {
 	// --repo names the repo (for its pipelines, roles and job folder); its
 	// alias's path is the checkout unless --dir points somewhere else, such as
 	// the clone of an earlier run.
 	repoName := c.String("repo")
-	repo := cfg.Repos[repoName]
+	repo := a.cfg.Repos[repoName]
 	dir := c.String("dir")
 	if repoName != "" && !c.IsSet("dir") {
 		if repo.Path == "" {
-			return cli.Exit(fmt.Sprintf("prf: repo %q has no path in %s; give --dir", repoName, confFile), exitUsage)
+			return cli.Exit(fmt.Sprintf("prf: repo %q has no path in %s; give --dir", repoName, config.FileName), exitUsage)
 		}
 		dir = repo.Path
 	}
@@ -356,15 +373,15 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	name := firstNonEmpty(repoName, filepath.Base(dir))
-	if !itemName.MatchString(name) {
-		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, confFile), exitUsage)
+	if !itemname.Valid(name) {
+		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, config.FileName), exitUsage)
 	}
 
-	roles, pipelineName, err := jobRoles(c, name, false)
+	roles, pipelineName, err := jobRoles(c, a.home, name, false)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
-	j := newJob(c, repo, roles)
+	j := a.newJob(c, repo, roles)
 	j.name, j.dir, j.pipeline = name, dir, pipelineName
 	if err := j.applyRepoDefaults(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
@@ -373,7 +390,7 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
-	if !gitOK(j.dir, "rev-parse", "--is-inside-work-tree") {
+	if !gitx.OK(j.dir, "rev-parse", "--is-inside-work-tree") {
 		return cli.Exit("prf: not a git repository: "+j.dir, exitUsage)
 	}
 
@@ -387,16 +404,16 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 			return j.finish("setup", exitSetup)
 		}
 	}
-	j.branch = firstNonEmpty(gitOutput(j.dir, "branch", "--show-current"), "HEAD")
+	j.branch = firstNonEmpty(gitx.Output(j.dir, "branch", "--show-current"), "HEAD")
 	if err := j.setJobDir(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	if gitOutput(j.dir, "status", "--porcelain") != "" {
+	if gitx.Output(j.dir, "status", "--porcelain") != "" {
 		logf("warning: %s has uncommitted changes; Claude's commits may include them", j.dir)
 	}
-	j.env = miseEnv(trustedDir(j.dir, j.workdir)) // your own checkout keeps mise's trust as you set it
+	j.env = mise.Env(mise.TrustedDir(j.dir, j.workdir)) // your own checkout keeps mise's trust as you set it
 	j.setupStage("installing tools")
-	installTools(j.dir, j.env)
+	mise.Install(j.dir, j.env, logf)
 	if err := j.prepareContext(); err != nil {
 		logf("%v", err)
 		return j.finish("setup", exitSetup)
@@ -408,23 +425,23 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 // settings that come from the repo's pipeline.json and conf.json, under the
 // flags.
 func (j *job) applyRepoDefaults(c *cli.Command) error {
-	p, _, _ := pipeline.Read(home, j.name)
-	j.defaultModel = firstNonEmpty(p.Model, cfg.Model)
-	j.maxCost = firstPositive(c.Float64("max-cost"), p.MaxCost, cfg.MaxCost)
-	j.defaultStep = firstPositive(p.MaxStepCost, cfg.MaxStepCost)
+	p, _, _ := pipeline.Read(j.home, j.name)
+	j.defaultModel = firstNonEmpty(p.Model, j.cfg.Model)
+	j.maxCost = firstPositive(c.Float64("max-cost"), p.MaxCost, j.cfg.MaxCost)
+	j.defaultStep = firstPositive(p.MaxStepCost, j.cfg.MaxStepCost)
 	j.checkCmd, j.expect = p.Check, p.Expect
 
-	repo := cfg.Repos[j.name]
+	repo := j.cfg.Repos[j.name]
 	j.push, j.prCreate = repo.Push, repo.PRCreate
 	j.base, j.prTitleFile, j.prBodyFile = flagOr(c, "base", repo.Base), repo.PRTitleFile, repo.PRBodyFile
 	if c.IsSet("pr-create") {
 		switch v := c.String("pr-create"); v {
-		case prDraft, prReady:
+		case config.PRDraft, config.PRReady:
 			j.prCreate = v
 		case prNone:
 			j.prCreate = ""
 		default:
-			return fmt.Errorf("--pr-create must be %s, %s or %s", prDraft, prReady, prNone)
+			return fmt.Errorf("--pr-create must be %s, %s or %s", config.PRDraft, config.PRReady, prNone)
 		}
 	}
 	if j.prCreate != "" {

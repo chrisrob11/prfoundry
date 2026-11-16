@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/itemname"
+	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
 )
@@ -30,7 +31,7 @@ type roleEntry struct {
 	Content     string `json:"content,omitempty"` // show --json only
 }
 
-func roleCmd() *cli.Command {
+func (a *app) roleCmd() *cli.Command {
 	repoFlag := &cli.StringFlag{Name: "repo", Usage: "work on this repo's roles (~/.prf/<repo>/roles) instead of the shared ones"}
 	jsonFlag := &cli.BoolFlag{Name: "json", Usage: "print JSON"}
 	return &cli.Command{
@@ -44,20 +45,20 @@ func roleCmd() *cli.Command {
 			"To change one: prf role show <name> > f; edit f; prf role set <name> --file f.\n" +
 			"set refuses a role that doesn't parse or renders an empty prompt, and leaves the file unchanged.",
 		Commands: []*cli.Command{
-			{Name: "list", Usage: "list roles with their scope, path, description and whether each is valid", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: roleList},
-			{Name: "show", Usage: "print the role prf would use", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: roleShow},
+			{Name: "list", Usage: "list roles with their scope, path, description and whether each is valid", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: a.roleList},
+			{Name: "show", Usage: "print the role prf would use", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag, jsonFlag}, Action: a.roleShow},
 			{Name: "set", Usage: "create or replace a role from --file or stdin, after validating it", ArgsUsage: "<name>",
-				Flags: []cli.Flag{repoFlag, &cli.StringFlag{Name: "file", Usage: "read from this file instead of stdin"}}, Action: roleSet},
-			{Name: "remove", Usage: "delete a role file", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag}, Action: roleRemove},
-			{Name: "reset", Usage: "restore a built-in role's original text in the shared roles", ArgsUsage: "<name>", Action: roleReset},
+				Flags: []cli.Flag{repoFlag, &cli.StringFlag{Name: "file", Usage: "read from this file instead of stdin"}}, Action: a.roleSet},
+			{Name: "remove", Usage: "delete a role file", ArgsUsage: "<name>", Flags: []cli.Flag{repoFlag}, Action: a.roleRemove},
+			{Name: "reset", Usage: "restore a built-in role's original text in the shared roles", ArgsUsage: "<name>", Action: a.roleReset},
 		},
 	}
 }
 
 // listRoles returns the role prf would use for each name, for repo (or
 // only the shared roles when repo is empty), sorted by name.
-func listRoles(repo string) []roleEntry {
-	dirs := roleDirs(repo)
+func listRoles(home, repo string) []roleEntry {
+	dirs := roles.Dirs(home, repo)
 	scopes := []string{"shared"}
 	if repo != "" {
 		scopes = []string{"repo", "shared"}
@@ -98,8 +99,8 @@ func loadRoleEntry(name, scope, path string) *roleEntry {
 	return e
 }
 
-func findRoleEntry(repo, name string) *roleEntry {
-	for _, e := range listRoles(repo) {
+func findRoleEntry(home, repo, name string) *roleEntry {
+	for _, e := range listRoles(home, repo) {
 		if e.Name == name {
 			return &e
 		}
@@ -117,21 +118,21 @@ func firstLine(text string) string {
 	return ""
 }
 
-func roleList(ctx context.Context, c *cli.Command) error {
+func (a *app) roleList(ctx context.Context, c *cli.Command) error {
 	repo, err := optionalRepo(c)
 	if err != nil {
 		return err
 	}
-	entries := listRoles(repo)
+	entries := listRoles(a.home, repo)
 	w := c.Root().Writer
 	if c.Bool("json") {
 		for i := range entries {
 			entries[i].Content = ""
 		}
-		return writeJSON(w, entries)
+		return jsonio.Write(w, entries)
 	}
 	if len(entries) == 0 {
-		_, _ = fmt.Fprintf(w, "no roles in %s (prf config init installs the built-in roles)\n", strings.Join(roleDirs(repo), " or "))
+		_, _ = fmt.Fprintf(w, "no roles in %s (prf config init installs the built-in roles)\n", strings.Join(roles.Dirs(a.home, repo), " or "))
 		return nil
 	}
 	for _, e := range entries {
@@ -147,23 +148,23 @@ func roleList(ctx context.Context, c *cli.Command) error {
 	return nil
 }
 
-func roleShow(ctx context.Context, c *cli.Command) error {
+func (a *app) roleShow(ctx context.Context, c *cli.Command) error {
 	repo, name, err := repoAndRoleName(c)
 	if err != nil {
 		return err
 	}
-	e := findRoleEntry(repo, name)
+	e := findRoleEntry(a.home, repo, name)
 	if e == nil {
-		return cli.Exit(fmt.Sprintf("prf: no role %q in %s", name, strings.Join(roleDirs(repo), " or ")), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: no role %q in %s", name, strings.Join(roles.Dirs(a.home, repo), " or ")), exitUsage)
 	}
 	if c.Bool("json") {
-		return writeJSON(c.Root().Writer, e)
+		return jsonio.Write(c.Root().Writer, e)
 	}
 	_, err = io.WriteString(c.Root().Writer, e.Content)
 	return err
 }
 
-func roleSet(ctx context.Context, c *cli.Command) error {
+func (a *app) roleSet(ctx context.Context, c *cli.Command) error {
 	repo, name, err := repoAndRoleName(c)
 	if err != nil {
 		return err
@@ -180,7 +181,7 @@ func roleSet(ctx context.Context, c *cli.Command) error {
 	if err := roles.Validate(name, string(text)); err != nil {
 		return cli.Exit("prf: not saved: "+err.Error(), exitUsage)
 	}
-	path := filepath.Join(roleDirs(repo)[0], name+".md")
+	path := filepath.Join(roles.Dirs(a.home, repo)[0], name+".md")
 	if err := atomicfile.Write(path, text); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
@@ -188,12 +189,12 @@ func roleSet(ctx context.Context, c *cli.Command) error {
 	return nil
 }
 
-func roleRemove(ctx context.Context, c *cli.Command) error {
+func (a *app) roleRemove(ctx context.Context, c *cli.Command) error {
 	repo, name, err := repoAndRoleName(c)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(roleDirs(repo)[0], name+".md")
+	path := filepath.Join(roles.Dirs(a.home, repo)[0], name+".md")
 	if err := os.Remove(path); errors.Is(err, fs.ErrNotExist) {
 		return cli.Exit(fmt.Sprintf("prf: no role %q at %s", name, path), exitUsage)
 	} else if err != nil {
@@ -201,13 +202,13 @@ func roleRemove(ctx context.Context, c *cli.Command) error {
 	}
 	w := c.Root().Writer
 	_, _ = fmt.Fprintf(w, "removed role %s %s\n", name, path)
-	if e := findRoleEntry(repo, name); e != nil {
+	if e := findRoleEntry(a.home, repo, name); e != nil {
 		_, _ = fmt.Fprintf(w, "%s now resolves to %s\n", name, e.Path)
 	}
 	return nil
 }
 
-func roleReset(ctx context.Context, c *cli.Command) error {
+func (a *app) roleReset(ctx context.Context, c *cli.Command) error {
 	name, err := nameArg(c, "role")
 	if err != nil {
 		return err
@@ -216,7 +217,7 @@ func roleReset(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit(fmt.Sprintf("prf: no built-in role %q", name), exitUsage)
 	}
-	path := filepath.Join(roleDirs("")[0], name+".md")
+	path := filepath.Join(roles.Dirs(a.home, "")[0], name+".md")
 	if err := atomicfile.Write(path, b); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
@@ -246,14 +247,8 @@ func nameArg(c *cli.Command, kind string) (string, error) {
 		return "", cli.Exit(fmt.Sprintf("prf: give exactly one %s name", kind), exitUsage)
 	}
 	name := c.Args().First()
-	if !itemName.MatchString(name) {
+	if !itemname.Valid(name) {
 		return "", cli.Exit(fmt.Sprintf("prf: invalid %s name %q: use letters, digits, '-', '_' and '.'", kind, name), exitUsage)
 	}
 	return name, nil
-}
-
-func writeJSON(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
 }

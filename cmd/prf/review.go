@@ -22,8 +22,10 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
 // A review gate (@review in a pipeline) stops the job and serves a review
@@ -141,14 +143,14 @@ func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 			fixes++
 			srv.set(pageFixing, j.reviewView(rounds, len(rounds)))
 			data.Review = renderReview(*last)
-			if err := writeFile(filepath.Join(dir, fmt.Sprintf("round-%d.md", last.Round)), data.Review); err != nil {
+			if err := textfile.Write(filepath.Join(dir, fmt.Sprintf("round-%d.md", last.Round)), data.Review); err != nil {
 				logf("saving the review: %v", err)
 			}
 			if code := j.runClaude(p, p.fixRole, step, model, data, false); code != 0 {
 				srv.set(pageStopped, j.reviewView(rounds, len(rounds)))
 				return end(code, "")
 			}
-			last.Fixed, last.FixCommit, last.Summary = true, gitOutput(j.dir, "rev-parse", "HEAD"), j.lastResult.text
+			last.Fixed, last.FixCommit, last.Summary = true, gitx.Output(j.dir, "rev-parse", "HEAD"), j.lastResult.text
 			addReplies(last, j.lastResult.text)
 			if err := writeRound(dir, *last); err != nil {
 				logf("saving the review: %v", err)
@@ -228,25 +230,25 @@ type reviewView struct {
 
 // reviewView describes the branch as it is now, for round, after rounds.
 func (j *job) reviewView(rounds []reviewRound, round int) reviewView {
-	head := gitOutput(j.dir, "rev-parse", "HEAD")
+	head := gitx.Output(j.dir, "rev-parse", "HEAD")
 	base := firstNonEmpty(j.state.BaseCommit, head)
 	v := reviewView{
 		Kind: pipeline.GateReview, Repo: j.name, Job: filepath.Base(j.jobDir), Branch: j.branch, Pipeline: j.pipeline,
 		Round: round, Base: base, Head: head, Task: j.task, Rounds: make([]reviewRound, len(rounds)),
-		Dirty: gitOutput(j.dir, "status", "--porcelain") != "",
-		Diff:  gitOutput(j.dir, "diff", "--no-color", "--no-ext-diff", "-M", base, head),
+		Dirty: gitx.Output(j.dir, "status", "--porcelain") != "",
+		Diff:  gitx.Output(j.dir, "diff", "--no-color", "--no-ext-diff", "-M", base, head),
 	}
 	for i, r := range rounds { // a copy: the gate goes on changing its rounds while the page reads this
 		r.Comments = slices.Clone(r.Comments)
 		v.Rounds[i] = r
 	}
-	if log := gitOutput(j.dir, "log", "--format=%h %s", base+".."+head); log != "" {
+	if log := gitx.Output(j.dir, "log", "--format=%h %s", base+".."+head); log != "" {
 		v.Commits = strings.Split(log, "\n")
 	}
 	if n := len(rounds); n > 0 {
 		if since := rounds[n-1].Commit; since != "" && since != head {
 			v.Since = since
-			v.SinceDiff = gitOutput(j.dir, "diff", "--no-color", "--no-ext-diff", "-M", since, head)
+			v.SinceDiff = gitx.Output(j.dir, "diff", "--no-color", "--no-ext-diff", "-M", since, head)
 		}
 	}
 	if j.pr != "" {

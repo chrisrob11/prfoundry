@@ -1,4 +1,7 @@
-package main
+// Package mise sets up mise for a job: the environment that tells it which
+// configs to trust, installing a repo's tools before Claude starts, and
+// where mise keeps its state.
+package mise
 
 import (
 	"os"
@@ -7,16 +10,16 @@ import (
 	"strings"
 )
 
-// miseConfigs are the project files that tell mise which tool versions to use.
-var miseConfigs = []string{
+// configs are the project files that tell mise which tool versions to use.
+var configs = []string{
 	"mise.toml", ".mise.toml", "mise.local.toml", ".tool-versions",
 	".config/mise.toml", ".config/mise/config.toml", "mise/config.toml", ".mise/config.toml",
 }
 
-// miseEnv returns the environment for mise and Claude. When trusted is set,
+// Env returns the environment for mise and Claude. When trusted is set,
 // mise trusts config files under it, so fresh clones there work without
 // `mise trust`; nothing outside it is trusted that wasn't already.
-func miseEnv(trusted string) []string {
+func Env(trusted string) []string {
 	env := os.Environ()
 	if trusted == "" {
 		return env
@@ -28,20 +31,21 @@ func miseEnv(trusted string) []string {
 	return append(env, "MISE_TRUSTED_CONFIG_PATHS="+paths)
 }
 
-// trustedDir is what mise may trust for a job in dir: the workdir when dir
+// TrustedDir is what mise may trust for a job in dir: the workdir when dir
 // is prf's own clone there, and nothing new for your own checkout.
-func trustedDir(dir, workdir string) string {
+func TrustedDir(dir, workdir string) string {
 	if strings.HasPrefix(dir, workdir+string(filepath.Separator)) {
 		return workdir
 	}
 	return ""
 }
 
-// installTools runs `mise install` in dir if it has a mise config, before
+// Install runs `mise install` in dir if it has a mise config, before
 // Claude starts: the sandbox blocks mise from downloading missing versions.
-// A failure is only a warning, since Claude may not need every tool.
-func installTools(dir string, env []string) {
-	if _, err := exec.LookPath("mise"); err != nil || !hasMiseConfig(dir) {
+// A failure is only a warning, given to logf, since Claude may not need
+// every tool.
+func Install(dir string, env []string, logf func(format string, args ...any)) {
+	if _, err := exec.LookPath("mise"); err != nil || !hasConfig(dir) {
 		return
 	}
 	logf("installing tools with mise")
@@ -53,8 +57,8 @@ func installTools(dir string, env []string) {
 	}
 }
 
-func hasMiseConfig(dir string) bool {
-	for _, name := range miseConfigs {
+func hasConfig(dir string) bool {
+	for _, name := range configs {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
 			return true
 		}
@@ -62,9 +66,10 @@ func hasMiseConfig(dir string) bool {
 	return false
 }
 
-// miseStateDir is where mise records which configs it has seen. It writes
-// there on every run, so the sandbox must allow it.
-func miseStateDir() string {
+// StateDir is where mise records which configs it has seen, or "" when
+// mise isn't installed. It writes there on every run, so the sandbox must
+// allow it.
+func StateDir() string {
 	if _, err := exec.LookPath("mise"); err != nil {
 		return ""
 	}
@@ -73,7 +78,8 @@ func miseStateDir() string {
 	}
 	state := os.Getenv("XDG_STATE_HOME")
 	if state == "" {
-		state = filepath.Join(homeDir(), ".local", "state")
+		h, _ := os.UserHomeDir()
+		state = filepath.Join(h, ".local", "state")
 	}
 	return filepath.Join(state, "mise")
 }

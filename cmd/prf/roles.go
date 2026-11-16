@@ -2,17 +2,12 @@ package main
 
 import (
 	"errors"
-	"regexp"
 	"text/template"
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 )
-
-// itemName is what a role, pipeline, or repo may be called: repo names
-// are dirs in home. roles.Find holds role names to the same rule.
-var itemName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
 // phase is one Claude run, or a gate. A nil tmpl means the task alone is
 // the prompt. A gate's tmpl is its fix role, run once per round of requested
@@ -31,11 +26,6 @@ type phase struct {
 	run       string        // the check gate's command; "" means the repo's
 	timeout   time.Duration // the check gate's command's limit; 0 means none
 	asks      string        // the question file of the ask gate after this role
-}
-
-// roleDirs returns where the roles of repo are looked up.
-func roleDirs(repo string) []string {
-	return roles.Dirs(home, repo)
 }
 
 // loadPhases turns pipeline steps into phases. hasWork reports whether a PR

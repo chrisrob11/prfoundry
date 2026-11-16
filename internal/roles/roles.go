@@ -9,9 +9,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"text/template"
+
+	"github.com/chrisrob11/prfoundry/internal/itemname"
 )
 
 //go:embed builtin/*.md
@@ -26,10 +27,6 @@ func Builtin() fs.FS {
 	}
 	return sub
 }
-
-// roleName is what a role may be called. Role names appear in
-// phase=<name> status lines.
-var roleName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
 // Data is what role templates can reference. Context is not for
 // templates: Render lists those files in every prompt. Review is set only
@@ -60,7 +57,7 @@ func Dirs(home, repo string) []string {
 
 // Find returns the text of <name>.md from the first of dirs that has it.
 func Find(dirs []string, name string) (string, error) {
-	if !roleName.MatchString(name) {
+	if !itemname.Valid(name) {
 		return "", fmt.Errorf("invalid role name %q: use letters, digits, '-', '_' and '.'", name)
 	}
 	for _, dir := range dirs {

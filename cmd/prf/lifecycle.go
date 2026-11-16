@@ -9,7 +9,11 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/gitx"
+	"github.com/chrisrob11/prfoundry/internal/mise"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
 )
 
@@ -36,7 +40,7 @@ func findJob(workdir, target string) (jobState, error) {
 	return s, nil
 }
 
-func resumeCmd() *cli.Command {
+func (a *app) resumeCmd() *cli.Command {
 	return &cli.Command{
 		Name:      "resume",
 		Usage:     "re-run a failed or died job from the step it stopped at, in its existing checkout",
@@ -46,7 +50,7 @@ func resumeCmd() *cli.Command {
 			"repeated. Status lines are added to the job's status file, and steps keep their numbers.",
 		Flags: []cli.Flag{
 			&cli.IntFlag{Name: "from", Usage: "step to start from, counting from 1 (default: the step it stopped at)"},
-			&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
+			&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
 			&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "also print each step Claude takes"},
 			&cli.StringFlag{Name: "model", Usage: "model for every remaining step (default: the models the job used)"},
 			&cli.Float64Flag{Name: "max-cost", Usage: "cap for the whole job, counting what it already spent"},
@@ -58,15 +62,15 @@ func resumeCmd() *cli.Command {
 			&cli.BoolFlag{Name: "sandbox", Value: true, Usage: "run Claude in Claude Code's sandbox (--sandbox=false turns it off)"},
 			&cli.StringFlag{Name: "claude", Value: "claude", Sources: cli.EnvVars("CLAUDE_BIN"), Usage: "claude binary"},
 		},
-		Action: resume,
+		Action: a.resume,
 	}
 }
 
-func resume(ctx context.Context, c *cli.Command) error {
+func (a *app) resume(ctx context.Context, c *cli.Command) error {
 	if c.Args().Len() < 1 {
 		return cli.Exit("prf: give the job to resume, as <repo>/<job>", exitUsage)
 	}
-	workdir, err := filepath.Abs(flagOr(c, "workdir", cfg.Workdir))
+	workdir, err := filepath.Abs(flagOr(c, "workdir", a.cfg.Workdir))
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
@@ -113,18 +117,19 @@ func resume(ctx context.Context, c *cli.Command) error {
 		steps = append(steps, s)
 	}
 	j := job{
+		home: a.home, cfg: a.cfg,
 		name: st.Repo, workdir: workdir, jobDir: st.JobDir, dir: st.Dir, branch: st.Branch,
 		pr: st.PR, task: st.Task, roles: steps, pipeline: st.Pipeline,
 		verbose: c.Bool("verbose"), stdout: c.Root().Writer, tee: true,
 		model: c.String("model"), stepCost: c.Float64("max-step-cost"),
-		mode:       flagOr(c, "mode", cfg.Mode),
-		claude:     resolveBinary(flagOr(c, "claude", cfg.Claude)),
-		claudeArgs: append(append([]string{}, cfg.ClaudeArgs...), c.Args().Tail()...),
+		mode:       flagOr(c, "mode", a.cfg.Mode),
+		claude:     resolveBinary(flagOr(c, "claude", a.cfg.Claude)),
+		claudeArgs: append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Tail()...),
 		out:        filepath.Join(st.JobDir, "claude.log"),
 		status:     filepath.Join(st.JobDir, "status"),
 		contextDir: filepath.Join(st.JobDir, "context"),
 		firstStep:  from - 1, totalSteps: len(st.Roles), priorCost: st.Cost,
-		reviewOpen: reviewOpen(c),
+		reviewOpen: a.reviewOpen(c),
 	}
 	if err := j.applyRepoDefaults(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
@@ -135,11 +140,11 @@ func resume(ctx context.Context, c *cli.Command) error {
 	if err := j.useSandbox(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	j.env = miseEnv(trustedDir(j.dir, workdir))
+	j.env = mise.Env(mise.TrustedDir(j.dir, workdir))
 	if err := j.listContext(); err != nil && !errors.Is(err, fs.ErrNotExist) { // a missing one just means no context
 		logf("warning: listing the context folder: %v", err)
 	}
-	phases, err := loadPhases(steps, roleDirs(j.name), j.pr != "" || j.task != "", j.task != "")
+	phases, err := loadPhases(steps, roles.Dirs(j.home, j.name), j.pr != "" || j.task != "", j.task != "")
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
@@ -154,7 +159,7 @@ func resume(ctx context.Context, c *cli.Command) error {
 	return j.runPhases(phases)
 }
 
-func cleanCmd() *cli.Command {
+func (a *app) cleanCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "clean",
 		Usage: "remove finished job folders (a dry run unless --yes)",
@@ -166,14 +171,14 @@ func cleanCmd() *cli.Command {
 			&cli.BoolFlag{Name: "failed", Usage: "also remove failed and died jobs"},
 			&cli.BoolFlag{Name: "force", Usage: "remove picked jobs even with uncommitted or unpushed work"},
 			&cli.BoolFlag{Name: "yes", Usage: "actually remove them"},
-			&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
+			&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
 		},
-		Action: clean,
+		Action: a.clean,
 	}
 }
 
-func clean(ctx context.Context, c *cli.Command) error {
-	states, err := readJobStates(flagOr(c, "workdir", cfg.Workdir), c.String("repo"))
+func (a *app) clean(ctx context.Context, c *cli.Command) error {
+	states, err := readJobStates(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
@@ -228,10 +233,10 @@ func unsafeToRemove(s jobState) string {
 	if _, err := os.Stat(s.Dir); err != nil {
 		return ""
 	}
-	if gitOutput(s.Dir, "status", "--porcelain") != "" {
+	if gitx.Output(s.Dir, "status", "--porcelain") != "" {
 		return "uncommitted changes"
 	}
-	if n := gitOutput(s.Dir, "rev-list", "--count", "HEAD", "--not", "--remotes"); n != "" && n != "0" {
+	if n := gitx.Output(s.Dir, "rev-list", "--count", "HEAD", "--not", "--remotes"); n != "" && n != "0" {
 		return n + " commits not on any remote"
 	}
 	return ""
