@@ -13,6 +13,7 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/itemname"
 	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
+	"github.com/chrisrob11/prfoundry/internal/opencode"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
@@ -34,6 +35,9 @@ func checkPipeline(home, repo string, steps []pipeline.Step) error {
 	for _, s := range steps {
 		if s.Model != "" && !pipeline.ValidModel(s.Model) {
 			return fmt.Errorf("step %s: invalid model %q", s.Name(), s.Model)
+		}
+		if s.OpenCodeModel != "" && !opencode.ValidModel(s.OpenCodeModel) {
+			return fmt.Errorf("step %s: opencode_model must be provider/model, not %q", s.Name(), s.OpenCodeModel)
 		}
 		if s.MaxCost < 0 {
 			return fmt.Errorf("step %s: max_cost can't be negative", s.Name())

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 
+	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/job"
@@ -34,7 +36,9 @@ func (a *app) resumeCmd() *cli.Command {
 			&cli.BoolFlag{Name: "review-open", Value: true, Usage: "at a @review or @ask gate, open its page in your browser (default: conf.json's review_open, else true)"},
 			&cli.StringFlag{Name: "mode", Value: "acceptEdits", Usage: "Claude permission mode"},
 			&cli.BoolFlag{Name: "sandbox", Value: true, Usage: "run Claude in Claude Code's sandbox (--sandbox=false turns it off)"},
+			agentFlag("(default: the agent the job ran)"),
 			&cli.StringFlag{Name: "claude", Value: "claude", Sources: cli.EnvVars("CLAUDE_BIN"), Usage: "claude binary"},
+			&cli.StringFlag{Name: "opencode", Value: "opencode", Sources: cli.EnvVars("OPENCODE_BIN"), Usage: "opencode binary"},
 		},
 		Action: a.resume,
 	}
@@ -73,12 +77,12 @@ func (a *app) resume(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: the job's checkout is gone: "+st.Dir, job.ExitUsage)
 	}
 
-	o, err := a.options(c, st.Repo)
+	o, err := a.options(c, st.Repo, cmp.Or(st.Agent, agent.Claude))
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	o.Workdir, o.PR, o.Task, o.Pipeline = workdir, st.PR, st.Task, st.Pipeline
-	o.ClaudeArgs = append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Tail()...)
+	o.AgentArgs = append(append([]string{}, a.agentArgs(o.Agent)...), c.Args().Tail()...)
 	if !c.IsSet("push") && !c.IsSet("pr-create") {
 		o.Push, o.PRCreate = st.Push, st.PRCreate // ship the way the job was started
 	}

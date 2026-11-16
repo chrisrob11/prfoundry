@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	claudeagent "github.com/chrisrob11/prfoundry/internal/claude"
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
@@ -32,7 +33,7 @@ func gateJob(t *testing.T) *Job {
 	}
 	t.Setenv("FAKE_LOG", filepath.Join(root, "claude.log"))
 	j := &Job{
-		name: "app", branch: "b", pipeline: "p", claude: claude, mode: "acceptEdits", stderr: io.Discard, grace: 300 * time.Millisecond, rt: Runtime{}.withDefaults(),
+		name: "app", branch: "b", pipeline: "p", agent: claudeagent.New(claude), mode: "acceptEdits", stderr: io.Discard, grace: 300 * time.Millisecond, rt: Runtime{}.withDefaults(),
 		jobDir: filepath.Join(root, "job"), dir: filepath.Join(root, "repo"), tmp: filepath.Join(root, "job", "tmp"),
 		status: filepath.Join(root, "job", "status"), env: os.Environ(), sigs: make(chan os.Signal, 1),
 		log: io.Discard, raw: io.Discard, feed: io.Discard, summaries: io.Discard,

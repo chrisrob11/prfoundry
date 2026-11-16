@@ -40,8 +40,9 @@ type Job struct {
 	Job        string          `json:"job"`
 	Branch     string          `json:"branch"`
 	Pipeline   string          `json:"pipeline,omitempty"`
+	Agent      string          `json:"agent,omitempty"` // the agent the steps run; "" is claude
 	Roles      []string        `json:"roles,omitempty"`
-	Models     []string        `json:"models,omitempty"` // each role's model; "" means Claude's default
+	Models     []string        `json:"models,omitempty"` // each role's model, for Agent; "" means its default
 	Steps      []pipeline.Step `json:"steps,omitempty"`  // the pipeline as given, with gate settings, for resume
 	State      string          `json:"state"`
 	Stage      string          `json:"stage"`              // a setup step, or the role running

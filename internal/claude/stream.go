@@ -1,4 +1,4 @@
-// Package claude is how prf talks to headless Claude Code: the arguments of
+// Package claude runs Claude Code headless for prf: the arguments of
 // a `claude -p` call, reading the stream-json it prints, and recognizing
 // its usage-limit error.
 package claude
@@ -10,8 +10,8 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
-	"sync"
 
+	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/human"
 )
 
@@ -37,53 +37,13 @@ type event struct {
 	} `json:"usage"`
 }
 
-// Result is what Claude's final "result" event said, if it sent one.
-type Result struct {
-	Got     bool
-	Subtype string // "success", or why it stopped, e.g. "error_max_budget_usd"
-	Text    string
-	IsError bool
-	Turns   int
-	Cost    float64
-	// CacheRead is the context tokens Claude re-read over the run's turns:
-	// most of a long step's cost.
-	CacheRead int64
-}
-
-// OverBudget reports whether Claude stopped at its --max-budget-usd.
-func (r Result) OverBudget() bool {
-	return r.Subtype == "error_max_budget_usd"
-}
-
-// Progress tracks what Claude is doing during one run, for the periodic
-// "working" line.
-type Progress struct {
-	mu    sync.Mutex
-	tools int
-	last  string
-}
-
-func (p *Progress) record(activity string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.tools++
-	p.last = activity
-}
-
-// Snapshot returns how many tool calls Claude has made, and the last one.
-func (p *Progress) Snapshot() (tools int, last string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.tools, p.last
-}
-
-// Follow reads Claude's stream-json output until it ends. It copies every
+// follow reads Claude's stream-json output until it ends. It copies every
 // line to raw, writes a readable line for each step to feed (with paths
 // under dir shown relative to it), records tool calls in prog, and returns
 // the final result. Lines that aren't JSON (such as errors) go to feed as
 // they are.
-func Follow(r io.Reader, raw, feed io.Writer, prog *Progress, dir string) Result {
-	var res Result
+func follow(r io.Reader, raw, feed io.Writer, prog *agent.Progress, dir string) agent.Result {
+	var res agent.Result
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), 64<<20) // tool results can be large
 	for sc.Scan() {
@@ -104,12 +64,15 @@ func Follow(r io.Reader, raw, feed io.Writer, prog *Progress, dir string) Result
 					}
 				case "tool_use":
 					activity := describeTool(c.Name, c.Input, dir)
-					prog.record(activity)
+					prog.Record(activity)
 					_, _ = fmt.Fprintf(feed, "  %s\n", activity)
 				}
 			}
 		case "result":
-			res = Result{Got: true, Subtype: ev.Subtype, Text: ev.Result, IsError: ev.IsError, Turns: ev.NumTurns, Cost: ev.CostUSD, CacheRead: ev.Usage.CacheRead}
+			res = agent.Result{
+				Got: true, Text: ev.Result, IsError: ev.IsError, Turns: ev.NumTurns, Cost: ev.CostUSD, CacheRead: ev.Usage.CacheRead,
+				OverBudget: ev.Subtype == "error_max_budget_usd", // Claude stopped at its --max-budget-usd
+			}
 		}
 	}
 	return res
