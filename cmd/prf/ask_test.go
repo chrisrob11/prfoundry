@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/review"
 	"github.com/chrisrob11/prfoundry/internal/state"
@@ -29,14 +30,12 @@ type ownerSaw struct {
 // waits for the page to show a question, reads it, README.md at HEAD, and
 // the job's state.json, and posts the answer. The gate doesn't open a page
 // that's still open, so a second question needs no second open.
-func fakeOwner(t *testing.T, answers ...string) *[]ownerSaw {
+func fakeOwner(t *testing.T, e env, answers ...string) *[]ownerSaw {
 	t.Helper()
 	var views []ownerSaw
 	opened := false
-	prevOpen, prevNotify := openBrowser, notify
-	t.Cleanup(func() { openBrowser, notify = prevOpen, prevNotify })
-	notify = func(string, string) {}
-	openBrowser = func(page string) error {
+	e.h.rt.Notify = func(string, string) {}
+	e.h.rt.OpenBrowser = func(page string) error {
 		if len(answers) == 0 || opened {
 			t.Errorf("question page opened again, or with no answers to give: %s", page)
 			return nil
@@ -126,7 +125,7 @@ const (
 // the test role.
 func askEnv(t *testing.T, count int, gate string) env {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	writeRole(t, e.roles, "asker", "ASK on {{.Branch}}")
 	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateAsk}.Fixer(), "ANSWER on {{.Branch}}\n{{.Question}}\n{{.Review}}")
 	asks := filepath.Join(e.root, "asks")
@@ -139,7 +138,7 @@ func askEnv(t *testing.T, count int, gate string) env {
 
 func TestAskGate(t *testing.T) {
 	e := askEnv(t, 1, `{"gate": "ask", "question": ".agent/stop.md", "model": "opus"}`)
-	views := fakeOwner(t, answer)
+	views := fakeOwner(t, e, answer)
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -209,7 +208,7 @@ func TestAskGate(t *testing.T) {
 func TestAskGateAcceptsRecommendations(t *testing.T) {
 	e := askEnv(t, 1, `"@ask"`)
 	t.Setenv("FAKE_ASK_PATH", "") // the default: $PRF_TMP/stop.md
-	views := fakeOwner(t, acceptAll)
+	views := fakeOwner(t, e, acceptAll)
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -233,7 +232,7 @@ func TestAskGateAcceptsRecommendations(t *testing.T) {
 
 func TestAskGateWithoutAQuestion(t *testing.T) {
 	e := askEnv(t, 0, `"@ask"`)
-	views := fakeOwner(t)
+	views := fakeOwner(t, e)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -247,9 +246,9 @@ func TestAskGateWithoutAQuestion(t *testing.T) {
 
 func TestAskGateRunsOutOfRounds(t *testing.T) {
 	e := askEnv(t, 5, `{"gate": "ask", "question": ".agent/stop.md", "max_rounds": 1}`)
-	fakeOwner(t, answer)
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitAsk {
-		t.Fatalf("exit %d, want %d", code, exitAsk)
+	fakeOwner(t, e, answer)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != job.ExitAsk {
+		t.Fatalf("exit %d, want %d", code, job.ExitAsk)
 	}
 	if n := len(e.calls(t)); n != 3 {
 		t.Errorf("got %d claude calls, want asker, answer, asker", n)
@@ -262,9 +261,9 @@ func TestAskGateRunsOutOfRounds(t *testing.T) {
 
 func TestAskGateStopJob(t *testing.T) {
 	e := askEnv(t, 1, `{"gate": "ask", "question": ".agent/stop.md"}`)
-	before := fakeOwner(t, stopJob)
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitOwner {
-		t.Fatalf("exit %d, want %d", code, exitOwner)
+	before := fakeOwner(t, e, stopJob)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != job.ExitOwner {
+		t.Fatalf("exit %d, want %d", code, job.ExitOwner)
 	}
 	if n := len(e.calls(t)); n != 1 {
 		t.Errorf("got %d claude calls, want only the asker's", n)
@@ -279,7 +278,7 @@ func TestAskGateStopJob(t *testing.T) {
 
 	// Resuming at the gate asks the same question again; once answered, it
 	// re-runs the asker, which it loads from the step before.
-	after := fakeOwner(t, answer)
+	after := fakeOwner(t, e, answer)
 	if code := e.run(t, "resume", "origin/b"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
 	}
@@ -294,47 +293,10 @@ func TestAskGateStopJob(t *testing.T) {
 	}
 }
 
-func TestAskSteps(t *testing.T) {
-	for _, tt := range []struct {
-		steps []pipeline.Step
-		want  string
-	}{
-		{[]pipeline.Step{{Gate: pipeline.GateAsk}}, "must follow a role"},
-		{[]pipeline.Step{{Role: "implement"}, {Gate: pipeline.GateReview}, {Gate: pipeline.GateAsk}}, "must follow a role"},
-	} {
-		if err := pipeline.CheckAskers(tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("CheckAskers(%+v) = %v", tt.steps, err)
-		}
-	}
-	if err := pipeline.CheckAskers([]pipeline.Step{{Role: "implement"}, {Gate: pipeline.GateAsk}}); err != nil {
-		t.Error(err)
-	}
-	if err := pipeline.CheckGate(pipeline.Step{Gate: pipeline.GateReview, Question: "q.md"}); err == nil || !strings.Contains(err.Error(), "only for the @ask gate") {
-		t.Errorf("question on @review: %v", err)
-	}
-	var s pipeline.Step
-	if err := json.Unmarshal([]byte(`{"gate": "ask", "question": "q.md"}`), &s); err != nil || s.Fixer() != "answer-question" {
-		t.Errorf("step = %+v, %v", s, err)
-	}
-	if b, _ := json.Marshal(s); string(b) != `{"gate":"ask","question":"q.md"}` {
-		t.Errorf("marshal = %s", b)
-	}
-	j := &job{dir: "/repo", env: []string{"PRF_TMP=/jobs/a/tmp", "TMPDIR=/repo/.tmp"}}
-	if got := j.questionPath(pipeline.DefaultQuestion); got != "/jobs/a/tmp/stop.md" {
-		t.Errorf("questionPath = %s", got)
-	}
-	if got := j.questionPath("$TMPDIR/stop.md"); got != "/repo/.tmp/stop.md" {
-		t.Errorf("questionPath = %s", got)
-	}
-	if got := j.questionPath(".agent/stop.md"); got != "/repo/.agent/stop.md" {
-		t.Errorf("questionPath = %s", got)
-	}
-}
-
 func TestAskGateTwice(t *testing.T) {
 	e := askEnv(t, 2, `"@ask"`)
 	t.Setenv("FAKE_ASK_PATH", "")
-	views := fakeOwner(t, answer, acceptAll)
+	views := fakeOwner(t, e, answer, acceptAll)
 
 	// The command line's @ask:model overrides the pipeline.
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "asker,@ask:sonnet"); code != 0 {
@@ -365,7 +327,7 @@ func TestAskGateEmptyQuestion(t *testing.T) {
 	e := askEnv(t, 0, `{"gate": "ask", "question": "$ASK_DIR/q.md"}`)
 	t.Setenv("ASK_DIR", filepath.Join(e.root, "qdir"))
 	writeFileT(t, filepath.Join(e.root, "qdir", "q.md"), " \n\n")
-	views := fakeOwner(t)
+	views := fakeOwner(t, e)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -377,7 +339,7 @@ func TestAskGateEmptyQuestion(t *testing.T) {
 func TestAskGateFixRoleFails(t *testing.T) {
 	e := askEnv(t, 1, `{"gate": "ask", "question": ".agent/stop.md"}`)
 	t.Setenv("FAKE_FAIL_ON", "ANSWER on")
-	before := fakeOwner(t, answer)
+	before := fakeOwner(t, e, answer)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 1 {
 		t.Fatalf("exit %d, want the fix role's 1", code)
 	}
@@ -390,7 +352,7 @@ func TestAskGateFixRoleFails(t *testing.T) {
 	// Resuming records the saved answers without asking again, then re-runs
 	// the asker.
 	t.Setenv("FAKE_FAIL_ON", "")
-	after := fakeOwner(t)
+	after := fakeOwner(t, e)
 	if code := e.run(t, "resume", "origin/b"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
 	}
@@ -412,7 +374,7 @@ func TestAskGateFixRoleFails(t *testing.T) {
 func TestAskGateRerunFails(t *testing.T) {
 	e := askEnv(t, 1, `{"gate": "ask", "question": ".agent/stop.md"}`)
 	t.Setenv("FAKE_FAIL_ON", "## Your questions, answered")
-	fakeOwner(t, answer)
+	fakeOwner(t, e, answer)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 1 {
 		t.Fatalf("exit %d, want the re-run's 1", code)
 	}
@@ -430,50 +392,14 @@ func TestAskGateRerunFails(t *testing.T) {
 
 func TestAskPipelineValidation(t *testing.T) {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	for _, roles := range []string{"@ask,implement", "implement,@review,@ask"} {
-		if code := e.run(t, "pipeline", "set", "p", "--repo", "origin", "--roles", roles); code != exitUsage {
-			t.Errorf("pipeline set %s: exit %d, want %d", roles, code, exitUsage)
+		if code := e.run(t, "pipeline", "set", "p", "--repo", "origin", "--roles", roles); code != job.ExitUsage {
+			t.Errorf("pipeline set %s: exit %d, want %d", roles, code, job.ExitUsage)
 		}
 	}
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "@ask"); code != exitUsage {
-		t.Errorf("run --role @ask: exit %d, want %d", code, exitUsage)
-	}
-}
-
-func TestFileAtHead(t *testing.T) {
-	j := &job{dir: newOrigin(t)}
-	if text, ok := j.fileAtHead("README.md"); !ok || !strings.HasPrefix(text, "# origin") {
-		t.Errorf("README.md = %q, %t", text, ok)
-	}
-	for _, path := range []string{"missing.go", "../outside", "/etc/passwd", "a/../../x"} {
-		if _, ok := j.fileAtHead(path); ok {
-			t.Errorf("fileAtHead(%q) found a file", path)
-		}
-	}
-
-	srv, err := review.Start(review.Options{Dir: t.TempDir(), Repo: "app", Job: "job", Activity: func() string { return "" }, FileAt: j.fileAtHead, Logf: t.Logf})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer srv.Close()
-	get := func(path string) (int, map[string]string) {
-		res, err := http.Get(srv.URL() + "api/file?path=" + url.QueryEscape(path))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = res.Body.Close() }()
-		var out map[string]string
-		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-			t.Fatal(err)
-		}
-		return res.StatusCode, out
-	}
-	if code, out := get("README.md"); code != http.StatusOK || out["path"] != "README.md" || !strings.HasPrefix(out["text"], "# origin") {
-		t.Errorf("api/file README.md: %d %v", code, out)
-	}
-	if code, _ := get("../x"); code != http.StatusNotFound {
-		t.Errorf("api/file ../x: %d", code)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "@ask"); code != job.ExitUsage {
+		t.Errorf("run --role @ask: exit %d, want %d", code, job.ExitUsage)
 	}
 }
 

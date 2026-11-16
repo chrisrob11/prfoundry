@@ -24,10 +24,8 @@ func readState(t *testing.T, jobDir string) state.Job {
 func TestJobState(t *testing.T) {
 	e := newEnv(t, "")
 	writeRole(t, e.roles, "test", "SLOW test")
-	prev := heartbeatEvery
-	heartbeatEvery = 50 * time.Millisecond
-	t.Cleanup(func() { heartbeatEvery = prev })
-	captureStderr(t)
+	e.h.rt.Heartbeat = 50 * time.Millisecond
+	e.captureStderr()
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
 
 	// Watch the job while it runs: during the slow test role, state.json
@@ -59,7 +57,7 @@ func TestJobState(t *testing.T) {
 
 func TestStatusCommand(t *testing.T) {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "ok", "--prompt", "x", "--role", "review"); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -72,7 +70,7 @@ func TestStatusCommand(t *testing.T) {
 	b, _ := json.Marshal(state.Job{Repo: "other", Job: "gone", State: state.Running, Stage: "test", Step: 1, Roles: []string{"test"}, PID: 1 << 30, Started: time.Now(), Updated: time.Now().Add(-time.Hour)})
 	writeFileT(t, filepath.Join(dead, state.FileName), string(b))
 
-	code, out := runPrfIO(t, "", "--home", e.home, "status", "--json")
+	code, out := e.runIO(t, "status", "--json")
 	var states []state.Job
 	if code != 0 || json.Unmarshal([]byte(out), &states) != nil {
 		t.Fatalf("status --json = %d %s", code, out)
@@ -94,7 +92,7 @@ func TestStatusCommand(t *testing.T) {
 		t.Error("jobs should be listed most recently updated first")
 	}
 
-	_, text := runPrfIO(t, "", "--home", e.home, "status", "--repo", "origin")
+	_, text := e.runIO(t, "status", "--repo", "origin")
 	for _, want := range []string{"REPO", "origin  bad", "failed", "2/3", "exit 1"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("status text missing %q:\n%s", want, text)
@@ -103,7 +101,7 @@ func TestStatusCommand(t *testing.T) {
 	if strings.Contains(text, "gone") {
 		t.Errorf("--repo origin should hide other repos:\n%s", text)
 	}
-	if _, out := runPrfIO(t, "", "--home", e.home, "status", "--repo", "none", "--json"); strings.TrimSpace(out) != "[]" {
+	if _, out := e.runIO(t, "status", "--repo", "none", "--json"); strings.TrimSpace(out) != "[]" {
 		t.Errorf("no jobs as JSON = %q, want []", out)
 	}
 }

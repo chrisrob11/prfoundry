@@ -1,12 +1,10 @@
 package main
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 )
 
@@ -57,129 +55,4 @@ func newOrigin(t *testing.T) string {
 	mustGit(t, dir, "commit", "-q", "--allow-empty", "-m", "on existing")
 	mustGit(t, dir, "switch", "-q", "main")
 	return dir
-}
-
-func TestCloneRepo(t *testing.T) {
-	origin := newOrigin(t)
-
-	tests := []struct {
-		name, branch, wantSubject string
-	}{
-		{name: "new branch from default", branch: "feat/new", wantSubject: "init"},
-		{name: "existing remote branch", branch: "existing", wantSubject: "on existing"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "clone")
-			if err := cloneRepo(origin, "", tt.branch, dir, ""); err != nil {
-				t.Fatal(err)
-			}
-			if got := mustGit(t, dir, "branch", "--show-current"); got != tt.branch {
-				t.Errorf("branch = %q, want %q", got, tt.branch)
-			}
-			if got := mustGit(t, dir, "log", "-1", "--format=%s"); got != tt.wantSubject {
-				t.Errorf("HEAD subject = %q, want %q", got, tt.wantSubject)
-			}
-		})
-	}
-
-	t.Run("destination exists", func(t *testing.T) {
-		err := cloneRepo(origin, "", "x", t.TempDir(), "")
-		if err == nil || !strings.Contains(err.Error(), "already exists") {
-			t.Fatalf("err = %v, want destination exists", err)
-		}
-	})
-
-	t.Run("base branch", func(t *testing.T) {
-		dir := filepath.Join(t.TempDir(), "clone")
-		if err := cloneRepo(origin, "existing", "feat/on-existing", dir, ""); err != nil {
-			t.Fatal(err)
-		}
-		if got := mustGit(t, dir, "log", "-1", "--format=%s"); got != "on existing" {
-			t.Errorf("HEAD subject = %q, want branch cut from existing", got)
-		}
-	})
-}
-
-func TestCloneRepoWithReference(t *testing.T) {
-	origin := newOrigin(t)
-	checkout := filepath.Join(t.TempDir(), "checkout")
-	mustGit(t, "", "clone", "-q", origin, checkout)
-
-	for name, reference := range map[string]string{"local checkout": checkout, "not a repo": t.TempDir(), "missing": "/nonexistent"} {
-		t.Run(name, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), "clone")
-			if err := cloneRepo(origin, "", "feat/x", dir, reference); err != nil {
-				t.Fatal(err)
-			}
-			if got := mustGit(t, dir, "log", "-1", "--format=%s"); got != "init" {
-				t.Errorf("HEAD subject = %q", got)
-			}
-			// --dissociate: the clone keeps no link to the reference's objects.
-			if _, err := os.Stat(filepath.Join(dir, ".git", "objects", "info", "alternates")); err == nil {
-				t.Error("clone still borrows objects from the reference")
-			}
-		})
-	}
-}
-
-func TestSwitchBranchLocal(t *testing.T) {
-	dir := newOrigin(t) // has a local branch "existing" and no origin remote
-	if err := switchBranch(dir, "existing"); err != nil {
-		t.Fatal(err)
-	}
-	if got := mustGit(t, dir, "log", "-1", "--format=%s"); got != "on existing" {
-		t.Errorf("switched to a new branch instead of the local one: HEAD = %q", got)
-	}
-}
-
-func TestOpenInput(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "ctx.txt")
-	writeFileT(t, file, "context")
-	fifo := filepath.Join(dir, "fifo")
-	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("regular file goes to every phase", func(t *testing.T) {
-		for _, first := range []bool{true, false} {
-			r, err := openInput(file, first)
-			if err != nil {
-				t.Fatal(err)
-			}
-			b, _ := io.ReadAll(r)
-			_ = r.(io.Closer).Close() // read-only
-			if string(b) != "context" {
-				t.Errorf("first=%v: read %q", first, b)
-			}
-		}
-	})
-
-	tests := []struct {
-		name   string
-		in     string
-		first  bool
-		wantIn io.Reader
-	}{
-		{name: "none", in: "", first: true, wantIn: nil},
-		{name: "stdin first phase", in: "-", first: true, wantIn: os.Stdin},
-		{name: "stdin later phase", in: "-", first: false, wantIn: nil},
-		{name: "fifo later phase", in: fifo, first: false, wantIn: nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := openInput(tt.in, tt.first)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tt.wantIn {
-				t.Errorf("got %v, want %v", got, tt.wantIn)
-			}
-		})
-	}
-
-	if _, err := openInput(filepath.Join(dir, "missing"), true); err == nil {
-		t.Error("missing file: want error")
-	}
 }

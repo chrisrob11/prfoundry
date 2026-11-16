@@ -1,4 +1,4 @@
-package main
+package job
 
 import (
 	"github.com/chrisrob11/prfoundry/internal/config"
@@ -7,23 +7,20 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
-// prNone is --pr-create's third value, beside config.PRDraft and config.PRReady: open no PR.
-const prNone = "none"
-
 // ship pushes the branch and opens its PR, when asked to, once every step
-// has passed (see internal/ship). It returns 0, or exitShip if pushing or
+// has passed (see internal/ship). It returns 0, or ExitShip if pushing or
 // opening the PR failed.
-func (j *job) ship() int {
+func (j *Job) ship() int {
 	if !j.push {
 		return 0
 	}
 	j.setState(func(s *state.Job) { s.Stage, s.Activity = "pushing", "" })
-	logf("pushing %s", j.branch)
+	j.logf("pushing %s", j.branch)
 	out, err := ship.Push(j.dir, j.branch)
 	j.event("PRF_PUSH branch=%s exit=%d", j.branch, ship.ExitCode(err))
 	if err != nil {
-		logf("push failed, so no PR either: %s", human.OneLine(out, 300))
-		return exitShip
+		j.logf("push failed, so no PR either: %s", human.OneLine(out, 300))
+		return ExitShip
 	}
 	j.setState(func(s *state.Job) { s.Pushed = true })
 	if j.prCreate == "" {
@@ -36,15 +33,15 @@ func (j *job) ship() int {
 		TitleFile: j.prTitleFile, BodyFile: j.prBodyFile,
 	})
 	if existed {
-		logf("a PR for %s is already open", j.branch)
+		j.logf("a PR for %s is already open", j.branch)
 	}
 	if err != nil {
-		logf("pushed, but no PR: %v", err)
+		j.logf("pushed, but no PR: %v", err)
 		j.event("PRF_PR branch=%s exit=1", j.branch)
-		return exitShip
+		return ExitShip
 	}
 	j.event("PRF_PR branch=%s url=%s", j.branch, url)
 	j.setState(func(s *state.Job) { s.PRURL = url })
-	logf("PR: %s", url)
+	j.logf("PR: %s", url)
 	return 0
 }

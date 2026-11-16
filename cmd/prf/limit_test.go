@@ -19,10 +19,8 @@ func TestALimitPausesTheJobAndRerunsTheStep(t *testing.T) {
 	writeFileT(t, limits, "1\n")
 	t.Setenv("FAKE_LIMITS", limits)
 	var asked time.Time
-	old := pauseFor
-	pauseFor = func(reset time.Time) time.Duration { asked = reset; return 300 * time.Millisecond }
-	t.Cleanup(func() { pauseFor = old })
-	captureStderr(t)
+	e.h.rt.PauseFor = func(reset time.Time) time.Duration { asked = reset; return 300 * time.Millisecond }
+	e.captureStderr()
 
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
 	seen := make(chan state.Job, 1)
@@ -67,10 +65,8 @@ func TestALimitPausesTheJobAndRerunsTheStep(t *testing.T) {
 func TestAnotherErrorStillFailsAtOnce(t *testing.T) {
 	e := newEnv(t, "")
 	writeRole(t, e.roles, "test", "FAIL")
-	old := pauseFor
-	pauseFor = func(time.Time) time.Duration { t.Error("paused for a non-limit failure"); return 0 }
-	t.Cleanup(func() { pauseFor = old })
-	captureStderr(t)
+	e.h.rt.PauseFor = func(time.Time) time.Duration { t.Error("paused for a non-limit failure"); return 0 }
+	e.captureStderr()
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}

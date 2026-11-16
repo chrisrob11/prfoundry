@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -10,9 +9,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
-	"github.com/chrisrob11/prfoundry/internal/mise"
-	"github.com/chrisrob11/prfoundry/internal/pipeline"
-	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/urfave/cli/v3"
 )
@@ -45,95 +42,47 @@ func (a *app) resumeCmd() *cli.Command {
 
 func (a *app) resume(ctx context.Context, c *cli.Command) error {
 	if c.Args().Len() < 1 {
-		return cli.Exit("prf: give the job to resume, as <repo>/<job>", exitUsage)
+		return cli.Exit("prf: give the job to resume, as <repo>/<job>", job.ExitUsage)
 	}
 	workdir, err := filepath.Abs(flagOr(c, "workdir", a.cfg.Workdir))
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	st, err := state.Find(workdir, c.Args().First())
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	if st.Live() && state.ProcessAlive(st.PID) {
-		return cli.Exit(fmt.Sprintf("prf: %s/%s is still running (process %d)", st.Repo, st.Job, st.PID), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: %s/%s is still running (process %d)", st.Repo, st.Job, st.PID), job.ExitUsage)
 	}
 
 	from := c.Int("from")
 	if from == 0 {
 		switch {
 		case st.State == state.Done:
-			return cli.Exit("prf: that job finished; use --from <step> to run steps again", exitUsage)
+			return cli.Exit("prf: that job finished; use --from <step> to run steps again", job.ExitUsage)
 		case st.Step == 0:
-			return cli.Exit("prf: that job stopped during setup, before any step; start a new run", exitUsage)
+			return cli.Exit("prf: that job stopped during setup, before any step; start a new run", job.ExitUsage)
 		}
 		from = st.Step
 	}
 	if from < 1 || from > len(st.Roles) {
-		return cli.Exit(fmt.Sprintf("prf: --from must be between 1 and %d", len(st.Roles)), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: --from must be between 1 and %d", len(st.Roles)), job.ExitUsage)
 	}
 	if _, err := os.Stat(st.Dir); err != nil {
-		return cli.Exit("prf: the job's checkout is gone: "+st.Dir, exitUsage)
+		return cli.Exit("prf: the job's checkout is gone: "+st.Dir, job.ExitUsage)
 	}
 
-	// An ask gate re-runs the step before it, so a resume there loads that
-	// step too, then drops it.
-	first := from - 1
-	if len(st.Steps) == len(st.Roles) && st.Steps[first].Gate == pipeline.GateAsk && first > 0 {
-		first--
-	}
-	steps := make([]pipeline.Step, 0, len(st.Roles)-first)
-	for i := first; i < len(st.Roles); i++ {
-		s, _ := pipeline.ParseStep(st.Roles[i])
-		if len(st.Steps) == len(st.Roles) {
-			s = st.Steps[i] // keeps a gate's settings
-		}
-		if i < len(st.Models) {
-			s.Model = st.Models[i]
-		}
-		steps = append(steps, s)
-	}
-	j := job{
-		home: a.home, cfg: a.cfg,
-		name: st.Repo, workdir: workdir, jobDir: st.JobDir, dir: st.Dir, branch: st.Branch,
-		pr: st.PR, task: st.Task, roles: steps, pipeline: st.Pipeline,
-		verbose: c.Bool("verbose"), stdout: c.Root().Writer, tee: true,
-		model: c.String("model"), stepCost: c.Float64("max-step-cost"),
-		mode:       flagOr(c, "mode", a.cfg.Mode),
-		claude:     resolveBinary(flagOr(c, "claude", a.cfg.Claude)),
-		claudeArgs: append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Tail()...),
-		out:        filepath.Join(st.JobDir, "claude.log"),
-		status:     filepath.Join(st.JobDir, "status"),
-		contextDir: filepath.Join(st.JobDir, "context"),
-		firstStep:  from - 1, totalSteps: len(st.Roles), priorCost: st.Cost,
-		reviewOpen: a.reviewOpen(c),
-	}
-	if err := j.applyRepoDefaults(c); err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
-	}
-	if !c.IsSet("push") && !c.IsSet("pr-create") {
-		j.push, j.prCreate = st.Push, st.PRCreate // ship the way the job was started
-	}
-	if err := j.useSandbox(c); err != nil {
-		return cli.Exit("prf: "+err.Error(), exitSetup)
-	}
-	j.env = mise.Env(mise.TrustedDir(j.dir, workdir))
-	if err := j.listContext(); err != nil && !errors.Is(err, fs.ErrNotExist) { // a missing one just means no context
-		logf("warning: listing the context folder: %v", err)
-	}
-	phases, err := loadPhases(steps, roles.Dirs(j.home, j.name), j.pr != "" || j.task != "", j.task != "")
+	o, err := a.options(c, st.Repo)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
-	phases, j.roles = phases[from-1-first:], steps[from-1-first:]
-	if err := pipeline.CheckCommands(j.roles, j.checkCmd); err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+	o.Workdir, o.PR, o.Task, o.Pipeline = workdir, st.PR, st.Task, st.Pipeline
+	o.ClaudeArgs = append(append([]string{}, a.cfg.ClaudeArgs...), c.Args().Tail()...)
+	if !c.IsSet("push") && !c.IsSet("pr-create") {
+		o.Push, o.PRCreate = st.Push, st.PRCreate // ship the way the job was started
 	}
-
-	st.PID, st.Exit, st.Activity = os.Getpid(), nil, ""
-	j.state = st
-	logf("resuming %s/%s from step %d/%d (%s)", st.Repo, st.Job, from, len(st.Roles), st.Roles[from-1])
-	return j.runPhases(phases)
+	return job.Resume(o, st, from)
 }
 
 func (a *app) cleanCmd() *cli.Command {
@@ -157,7 +106,7 @@ func (a *app) cleanCmd() *cli.Command {
 func (a *app) clean(ctx context.Context, c *cli.Command) error {
 	states, err := state.List(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitUsage)
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
 	w := c.Root().Writer
 	var picked int
@@ -177,7 +126,7 @@ func (a *app) clean(ctx context.Context, c *cli.Command) error {
 			_, _ = fmt.Fprintf(w, "keep    %-30s %s (--force removes it anyway)\n", name, reason)
 			continue
 		}
-		size := dirSize(s.JobDir)
+		size := dirSize(s.JobDir, a.logf)
 		picked++
 		freed += size
 		if !c.Bool("yes") {
@@ -185,7 +134,7 @@ func (a *app) clean(ctx context.Context, c *cli.Command) error {
 			continue
 		}
 		if err := os.RemoveAll(s.JobDir); err != nil {
-			return cli.Exit("prf: "+err.Error(), exitSetup)
+			return cli.Exit("prf: "+err.Error(), job.ExitSetup)
 		}
 		_, _ = fmt.Fprintf(w, "removed %-30s %-6s %s\n", name, s.State, megabytes(size))
 	}
@@ -219,7 +168,7 @@ func unsafeToRemove(s state.Job) string {
 	return ""
 }
 
-func dirSize(dir string) int64 {
+func dirSize(dir string, logf func(format string, args ...any)) int64 {
 	var size int64
 	err := filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
 		if err == nil && d.Type().IsRegular() {

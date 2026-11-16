@@ -1,7 +1,7 @@
-package main
+package job
 
 import (
-	_ "embed"
+	"cmp"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,40 +28,40 @@ import (
 // <job>/reviews/round-N.json, and the review as the fix role saw it in
 // round-N.md.
 
-// openBrowser and notify tell you a review is waiting; tests replace them.
-var (
-	openBrowser = func(url string) error {
-		name := "xdg-open"
-		if runtime.GOOS == "darwin" {
-			name = "open"
-		}
-		return exec.Command(name, url).Run()
+// openBrowser opens url in your browser: Runtime.OpenBrowser's default.
+func openBrowser(url string) error {
+	name := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		name = "open"
 	}
-	notify = func(title, msg string) {
-		if runtime.GOOS == "darwin" {
-			go func() {
-				_ = exec.Command("osascript", "-e", fmt.Sprintf("display notification %q with title %q sound name \"Glass\"", msg, title)).Run()
-			}()
-		}
+	return exec.Command(name, url).Run()
+}
+
+// notify shows a desktop notification, on macOS: Runtime.Notify's default.
+func notify(title, msg string) {
+	if runtime.GOOS == "darwin" {
+		go func() {
+			_ = exec.Command("osascript", "-e", fmt.Sprintf("display notification %q with title %q sound name \"Glass\"", msg, title)).Run()
+		}()
 	}
-)
+}
 
 // reviewGate runs the review gate p at step and returns its exit code: 0
-// once you approve, the fix role's code if it fails, exitReview after
+// once you approve, the fix role's code if it fails, ExitReview after
 // max_rounds rounds of changes, or 130 if interrupted while waiting. A
 // resumed gate picks up the rounds in <job>/reviews, addressing a round
 // of changes the job stopped before finishing.
-func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
+func (j *Job) reviewGate(p phase, step, model string, data roles.Data) int {
 	dir := filepath.Join(j.jobDir, "reviews")
 	rounds, err := review.ReadRounds(dir)
 	if err != nil {
-		logf("%v", err)
-		return exitSetup
+		j.logf("%v", err)
+		return ExitSetup
 	}
 	srv, err := j.startPage(nil)
 	if err != nil {
-		logf("starting the review page: %v", err)
-		return exitSetup
+		j.logf("starting the review page: %v", err)
+		return ExitSetup
 	}
 	defer srv.Close()
 
@@ -76,14 +76,14 @@ func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 			last := &rounds[n-1]
 			if fixes == p.maxRounds {
 				srv.Set(review.PageStopped, j.reviewView(rounds, len(rounds)))
-				logf("[%s] %s: stopped: changes still requested after %d rounds; prf resume %s/%s carries on", step, p.name, fixes, j.name, filepath.Base(j.jobDir))
-				return end(exitReview, " stopped=max_rounds")
+				j.logf("[%s] %s: stopped: changes still requested after %d rounds; prf resume %s/%s carries on", step, p.name, fixes, j.name, filepath.Base(j.jobDir))
+				return end(ExitReview, " stopped=max_rounds")
 			}
 			fixes++
 			srv.Set(review.PageFixing, j.reviewView(rounds, len(rounds)))
 			data.Review = review.RenderChanges(*last)
 			if err := textfile.Write(filepath.Join(dir, fmt.Sprintf("round-%d.md", last.Round)), data.Review); err != nil {
-				logf("saving the review: %v", err)
+				j.logf("saving the review: %v", err)
 			}
 			if code := j.runClaude(p, p.fixRole, step, model, data, false); code != 0 {
 				srv.Set(review.PageStopped, j.reviewView(rounds, len(rounds)))
@@ -92,7 +92,7 @@ func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 			last.Fixed, last.FixCommit, last.Summary = true, gitx.Output(j.dir, "rev-parse", "HEAD"), j.lastResult.Text
 			last.AddReplies(j.lastResult.Text)
 			if err := review.WriteRound(dir, *last); err != nil {
-				logf("saving the review: %v", err)
+				j.logf("saving the review: %v", err)
 			}
 			continue
 		}
@@ -103,11 +103,11 @@ func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 			s.State, s.Stage, s.Activity, s.ReviewURL = state.Review, p.name, fmt.Sprintf("round %d", view.Round), srv.URL()
 		})
 		j.event("PRF_REVIEW branch=%s phase=%s step=%s round=%d url=%s", j.branch, p.name, step, view.Round, srv.URL())
-		logf("[%s] %s: round %d: waiting for your review at %s", step, p.name, view.Round, srv.URL())
-		notify("prf: "+j.name+" is ready for review", fmt.Sprintf("%s, round %d", j.branch, view.Round))
+		j.logf("[%s] %s: round %d: waiting for your review at %s", step, p.name, view.Round, srv.URL())
+		j.rt.Notify("prf: "+j.name+" is ready for review", fmt.Sprintf("%s, round %d", j.branch, view.Round))
 		if j.reviewOpen && !srv.Watched() {
-			if err := openBrowser(srv.URL()); err != nil {
-				logf("opening the review page: %v", err)
+			if err := j.rt.OpenBrowser(srv.URL()); err != nil {
+				j.logf("opening the review page: %v", err)
 			}
 		}
 
@@ -115,45 +115,38 @@ func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 		select {
 		case r = <-srv.Submitted():
 		case <-j.sigs:
-			logf("[%s] %s: interrupted while waiting for your review", step, p.name)
+			j.logf("[%s] %s: interrupted while waiting for your review", step, p.name)
 			return end(130, "")
 		}
 		r.Round, r.Commit, r.Submitted = view.Round, view.Head, time.Now()
 		rounds = append(rounds, r)
 		if err := review.WriteRound(dir, r); err != nil {
-			logf("saving the review: %v", err)
+			j.logf("saving the review: %v", err)
 		}
 		j.setState(func(s *state.Job) { s.State, s.Activity, s.ReviewURL = state.Running, "", "" })
 		j.event("PRF_REVIEWED branch=%s phase=%s step=%s round=%d verdict=%s comments=%d", j.branch, p.name, step, r.Round, r.Verdict, len(r.Comments))
 		if r.Verdict == review.Approve {
 			srv.Set(review.PageApproved, j.reviewView(rounds, len(rounds)))
-			logf("[%s] %s: approved in round %d after %s", step, p.name, r.Round, human.Duration(time.Since(start)))
+			j.logf("[%s] %s: approved in round %d after %s", step, p.name, r.Round, human.Duration(time.Since(start)))
 			return end(0, "")
 		}
-		logf("[%s] %s: round %d: changes requested (%d comments)", step, p.name, r.Round, len(r.Comments))
+		j.logf("[%s] %s: round %d: changes requested (%d comments)", step, p.name, r.Round, len(r.Comments))
 	}
 }
 
 // startPage serves the job's review page, which keeps its URL in
 // <job>/reviews, with fileAt (nil for none) for the files it links to.
-func (j *job) startPage(fileAt func(path string) (string, bool)) (*review.Server, error) {
+func (j *Job) startPage(fileAt func(path string) (string, bool)) (*review.Server, error) {
 	return review.Start(review.Options{
 		Dir: filepath.Join(j.jobDir, "reviews"), Repo: j.name, Job: filepath.Base(j.jobDir),
-		Activity: j.activity, FileAt: fileAt, Logf: logf,
+		Activity: j.activity, FileAt: fileAt, Logf: j.logf,
 	})
 }
 
-// activity is Claude's latest step, for the review page while it fixes.
-func (j *job) activity() string {
-	j.stateMu.Lock()
-	defer j.stateMu.Unlock()
-	return j.state.Activity
-}
-
 // reviewView describes the branch as it is now, for round, after rounds.
-func (j *job) reviewView(rounds []review.Round, round int) review.View {
+func (j *Job) reviewView(rounds []review.Round, round int) review.View {
 	head := gitx.Output(j.dir, "rev-parse", "HEAD")
-	base := firstNonEmpty(j.state.BaseCommit, head)
+	base := cmp.Or(j.state.BaseCommit, head)
 	v := review.View{
 		Kind: pipeline.GateReview, Repo: j.name, Job: filepath.Base(j.jobDir), Branch: j.branch, Pipeline: j.pipeline,
 		Round: round, Base: base, Head: head, Task: j.task, Rounds: make([]review.Round, len(rounds)),

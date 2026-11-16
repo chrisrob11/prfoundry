@@ -1,7 +1,8 @@
-package main
+package job
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -44,10 +45,6 @@ const (
 // errInterrupted is what a gate's wait returns when you press Ctrl-C.
 var errInterrupted = errors.New("interrupted")
 
-// commandGrace is how long a command prf stops, or the processes a
-// finished command left running, get to exit before they're killed.
-var commandGrace = 5 * time.Second
-
 // checkRun is how a check gate runs its command: in srt with the settings
 // file sandbox, unless that's "", and with tmp as its TMPDIR.
 type checkRun struct {
@@ -55,14 +52,14 @@ type checkRun struct {
 }
 
 // commandGate runs the check gate p at step and returns its exit code: 0
-// once its command passes, the fix role's code if it fails, exitCheck when
-// the command still fails after max_rounds fixes, exitSetup if the command
+// once its command passes, the fix role's code if it fails, ExitCheck when
+// the command still fails after max_rounds fixes, ExitSetup if the command
 // can't start or be sandboxed, or 130 if interrupted. A resumed gate numbers
 // its rounds after the ones already saved.
-func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
+func (j *Job) commandGate(p phase, step, model string, data roles.Data) int {
 	n, _, _ := strings.Cut(step, "/")
 	dir := filepath.Join(j.jobDir, "checks", "step-"+n)
-	command := firstNonEmpty(p.run, j.checkCmd)
+	command := cmp.Or(p.run, j.checkCmd)
 	saved, _ := filepath.Glob(filepath.Join(dir, "round-*.log"))
 
 	j.event("PRF_START branch=%s phase=%s step=%s pipeline=%s", j.branch, p.name, step, j.pipeline)
@@ -75,35 +72,35 @@ func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
 	// the job's folder can be too deep for a test's unix socket.
 	tmp, err := os.MkdirTemp("", "prf-check-")
 	if err != nil {
-		logf("[%s] %s: making a TMPDIR for the command: %v", step, p.name, err)
-		return end(exitSetup, "")
+		j.logf("[%s] %s: making a TMPDIR for the command: %v", step, p.name, err)
+		return end(ExitSetup, "")
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	run := checkRun{tmp: tmp}
 	if run.sandbox, err = j.checkSandbox(tmp); err != nil {
-		logf("[%s] %s: %v", step, p.name, err)
-		return end(exitSetup, "")
+		j.logf("[%s] %s: %v", step, p.name, err)
+		return end(ExitSetup, "")
 	}
 	for {
 		round++
 		j.setState(func(s *state.Job) {
 			s.State, s.Stage, s.Activity, s.ReviewURL = state.Running, p.name, fmt.Sprintf("round %d: %s", round, human.OneLine(command, 80)), ""
 		})
-		logf("[%s] %s: round %d: running %s", step, p.name, round, command)
+		j.logf("[%s] %s: round %d: running %s", step, p.name, round, command)
 		start := time.Now()
 		out, code, err := j.runCommand(command, p.timeout, run)
 		logFile := filepath.Join(dir, fmt.Sprintf("round-%d.log", round))
 		if werr := textfile.Write(logFile, out); werr != nil {
-			logf("saving the output: %v", werr)
+			j.logf("saving the output: %v", werr)
 		}
 		timedOut := errors.Is(err, context.DeadlineExceeded)
 		switch {
 		case errors.Is(err, errInterrupted):
-			logf("[%s] %s: interrupted while running %s", step, p.name, command)
+			j.logf("[%s] %s: interrupted while running %s", step, p.name, command)
 			return end(130, "")
 		case err != nil && !timedOut:
-			logf("[%s] %s: running %s: %v", step, p.name, command, err)
-			return end(exitSetup, "")
+			j.logf("[%s] %s: running %s: %v", step, p.name, command, err)
+			return end(ExitSetup, "")
 		}
 		note := ""
 		if timedOut {
@@ -112,30 +109,30 @@ func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
 		j.event("PRF_CHECK branch=%s phase=%s step=%s round=%d exit=%d%s", j.branch, p.name, step, round, code, note)
 		took := human.Duration(time.Since(start))
 		if code == 0 {
-			logf("[%s] %s: passed in %s", step, p.name, took)
+			j.logf("[%s] %s: passed in %s", step, p.name, took)
 			return end(0, "")
 		}
 		if timedOut {
-			logf("[%s] %s: stopped after %s: its %s timeout", step, p.name, took, p.timeout)
+			j.logf("[%s] %s: stopped after %s: its %s timeout", step, p.name, took, p.timeout)
 		} else {
-			logf("[%s] %s: failed (exit %d) after %s; the output is in %s", step, p.name, code, took, logFile)
+			j.logf("[%s] %s: failed (exit %d) after %s; the output is in %s", step, p.name, code, took, logFile)
 		}
 		if fixes == p.maxRounds {
-			logf("[%s] %s: stopped: still failing after %d fixes; prf resume %s/%s carries on", step, p.name, fixes, j.name, filepath.Base(j.jobDir))
-			return end(exitCheck, " stopped=max_rounds")
+			j.logf("[%s] %s: stopped: still failing after %d fixes; prf resume %s/%s carries on", step, p.name, fixes, j.name, filepath.Base(j.jobDir))
+			return end(ExitCheck, " stopped=max_rounds")
 		}
 		fixes++
 		full := ""
 		if j.tmp != "" { // where the fix role can read it
 			full = filepath.Join(j.tmp, fmt.Sprintf("check-%s-round-%d.log", n, round))
 			if err := textfile.Write(full, out); err != nil {
-				logf("saving the output: %v", err)
+				j.logf("saving the output: %v", err)
 				full = ""
 			}
 		}
 		data.Review = renderFailure(command, code, timedOut, p.timeout, out, full)
 		if err := textfile.Write(filepath.Join(dir, fmt.Sprintf("round-%d.md", round)), data.Review); err != nil {
-			logf("saving the failure: %v", err)
+			j.logf("saving the failure: %v", err)
 		}
 		if code := j.runClaude(p, p.fixRole, step, model, data, false); code != 0 {
 			return end(code, "")
@@ -149,9 +146,9 @@ func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
 // the output also goes to the log. When it ends, anything it left running is
 // killed. It stops the command, and everything it started, at timeout (0 for
 // none), returning context.DeadlineExceeded, or when prf is interrupted,
-// returning errInterrupted: SIGTERM first, then SIGKILL after commandGrace.
+// returning errInterrupted: SIGTERM first, then SIGKILL after j.grace.
 // Any other error means it didn't start.
-func (j *job) runCommand(command string, timeout time.Duration, run checkRun) (string, int, error) {
+func (j *Job) runCommand(command string, timeout time.Duration, run checkRun) (string, int, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(context.Background(), timeout)
@@ -180,7 +177,7 @@ func (j *job) runCommand(command string, timeout time.Duration, run checkRun) (s
 		stopped.Store(true)
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	}
-	cmd.WaitDelay = commandGrace // then Wait kills it, or stops waiting for what it left holding its output
+	cmd.WaitDelay = j.grace // then Wait kills it, or stops waiting for what it left holding its output
 	if err := cmd.Start(); err != nil {
 		return "", 0, err
 	}
@@ -259,7 +256,7 @@ func unseenTail(out, ex string) string {
 
 // srtBinary is Anthropic's sandbox runtime, which runs a check gate's
 // command in a sandboxed job.
-var srtBinary = "srt"
+const srtBinary = "srt"
 
 // srtSettings is srt's settings file.
 type srtSettings struct {
@@ -285,7 +282,7 @@ type srtSettings struct {
 // hook for the next step. It returns "" when Claude runs unsandboxed, and
 // fails when srt isn't installed, rather than run the command without the
 // sandbox Claude has.
-func (j *job) checkSandbox(tmp string) (string, error) {
+func (j *Job) checkSandbox(tmp string) (string, error) {
 	if j.settings == "" {
 		return "", nil
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/review"
 	"github.com/chrisrob11/prfoundry/internal/state"
@@ -13,13 +14,11 @@ import (
 
 // fakeReviewer stands in for you at a review gate: each time the gate opens
 // the review page, it posts the next of reviews to it.
-func fakeReviewer(t *testing.T, reviews ...string) *[]string {
+func fakeReviewer(t *testing.T, e env, reviews ...string) *[]string {
 	t.Helper()
 	var urls []string
-	prevOpen, prevNotify := openBrowser, notify
-	t.Cleanup(func() { openBrowser, notify = prevOpen, prevNotify })
-	notify = func(string, string) {}
-	openBrowser = func(url string) error {
+	e.h.rt.Notify = func(string, string) {}
+	e.h.rt.OpenBrowser = func(url string) error {
 		urls = append(urls, url)
 		if len(urls) > len(reviews) {
 			t.Errorf("review page opened %d times, want %d", len(urls), len(reviews))
@@ -51,9 +50,9 @@ const (
 
 func TestReviewGate(t *testing.T) {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateReview}.Fixer(), "fix on {{.Branch}}\n{{.Review}}")
-	urls := fakeReviewer(t, requestChanges, approve)
+	urls := fakeReviewer(t, e, requestChanges, approve)
 
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "the task", "--role", "implement,@review:opus"); code != 0 {
 		t.Fatalf("exit %d", code)
@@ -114,13 +113,13 @@ func TestReviewGate(t *testing.T) {
 
 func TestReviewGateRunsOutOfRounds(t *testing.T) {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateReview}.Fixer(), "fix {{.Review}}")
 	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "r", "pipelines": {"r": ["implement", {"gate": "review", "max_rounds": 1}]}}`)
-	before := fakeReviewer(t, requestChanges, requestChanges)
+	before := fakeReviewer(t, e, requestChanges, requestChanges)
 
-	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != exitReview {
-		t.Fatalf("exit %d, want %d", code, exitReview)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != job.ExitReview {
+		t.Fatalf("exit %d, want %d", code, job.ExitReview)
 	}
 	if n := len(e.calls(t)); n != 2 {
 		t.Errorf("got %d claude calls, want implement and one fix run", n)
@@ -131,7 +130,7 @@ func TestReviewGateRunsOutOfRounds(t *testing.T) {
 	}
 
 	// Resuming picks up round 2's unaddressed changes, then waits for round 3.
-	after := fakeReviewer(t, approve)
+	after := fakeReviewer(t, e, approve)
 	if code := e.run(t, "resume", "origin/b"); code != 0 {
 		t.Fatalf("resume: exit %d", code)
 	}

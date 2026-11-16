@@ -12,7 +12,7 @@ import (
 
 func TestCostsSumsEachRolesSpendAcrossJobs(t *testing.T) {
 	e := newEnv(t, "")
-	captureStderr(t)
+	e.captureStderr()
 	for _, branch := range []string{"one", "two"} {
 		if code := e.run(t, "run", "--repo", e.origin, "--branch", branch, "--prompt", "x", "--role", "implement:opus,review:sonnet"); code != 0 {
 			t.Fatalf("%s: exit %d", branch, code)
@@ -23,7 +23,7 @@ func TestCostsSumsEachRolesSpendAcrossJobs(t *testing.T) {
 		t.Fatalf("one's spend = %+v", s.Spend)
 	}
 
-	code, out := runPrfIO(t, "", "--home", e.home, "costs", "--json")
+	code, out := e.runIO(t, "costs", "--json")
 	var rows []state.Spend
 	if code != 0 || json.Unmarshal([]byte(out), &rows) != nil {
 		t.Fatalf("costs --json = %d %s", code, out)
@@ -32,7 +32,7 @@ func TestCostsSumsEachRolesSpendAcrossJobs(t *testing.T) {
 		t.Errorf("rows = %+v, want each role summed over both jobs", rows)
 	}
 
-	_, text := runPrfIO(t, "", "--home", e.home, "costs")
+	_, text := e.runIO(t, "costs")
 	for _, want := range []string{"ROLE", "implement  opus", "review     sonnet", "50.0%", "30k", "total $0.20"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("costs text missing %q:\n%s", want, text)

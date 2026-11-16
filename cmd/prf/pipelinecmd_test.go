@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
@@ -44,7 +45,7 @@ func TestPipelineCommand(t *testing.T) {
 		t.Fatal("list created pipeline.json")
 	}
 
-	if code, _ := pipe("implement\nperf\n", "set", "feature", "--repo", "app"); code != exitUsage {
+	if code, _ := pipe("implement\nperf\n", "set", "feature", "--repo", "app"); code != job.ExitUsage {
 		t.Fatalf("set with a missing role: exit %d", code)
 	}
 	writeRole(t, filepath.Join(h, "app", "roles"), "perf", "perf on {{.Branch}}")
@@ -68,7 +69,7 @@ func TestPipelineCommand(t *testing.T) {
 	if code, _ := pipe("", "default", "bugfix", "--repo", "app"); code != 0 || saved().Default != "bugfix" {
 		t.Errorf("default: exit %d, default %q", code, saved().Default)
 	}
-	if code, _ := pipe("", "default", "nope", "--repo", "app"); code != exitUsage {
+	if code, _ := pipe("", "default", "nope", "--repo", "app"); code != job.ExitUsage {
 		t.Errorf("default of a missing pipeline: exit %d", code)
 	}
 
@@ -89,7 +90,7 @@ func TestPipelineCommand(t *testing.T) {
 	if code, _ := pipe("", "remove", "bugfix", "--repo", "app"); code != 0 || saved().Default != "" {
 		t.Errorf("remove default: exit %d, default %q", code, saved().Default)
 	}
-	if code, _ := pipe("", "remove", "bugfix", "--repo", "app"); code != exitUsage {
+	if code, _ := pipe("", "remove", "bugfix", "--repo", "app"); code != job.ExitUsage {
 		t.Errorf("removing a missing pipeline: exit %d", code)
 	}
 	if code, _ := pipe("", "list"); code == 0 {

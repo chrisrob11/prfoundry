@@ -8,6 +8,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/human"
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/urfave/cli/v3"
@@ -29,7 +30,7 @@ func (a *app) costsCmd() *cli.Command {
 		Action: func(ctx context.Context, c *cli.Command) error {
 			states, err := state.List(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 			if err != nil {
-				return cli.Exit("prf: "+err.Error(), exitUsage)
+				return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 			}
 			rows, total, unrecorded := state.Sum(states, c.Duration("since"), time.Now())
 			w := c.Root().Writer

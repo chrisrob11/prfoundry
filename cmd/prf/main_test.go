@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/sandbox"
@@ -71,6 +73,14 @@ type env struct {
 	roles  string // shared roles dir
 	log    string // fake claude call log
 	root   string
+	h      *hooks // shared by every copy of the env
+}
+
+// hooks are what a test changes about how the app runs: where its stderr
+// goes, and how its jobs reach the browser, the desktop, the clock and the disk.
+type hooks struct {
+	stderr io.Writer
+	rt     job.Runtime
 }
 
 // newEnv sets up an origin repo, a fake claude, the shared roles, and a
@@ -87,7 +97,7 @@ func removeFile(t *testing.T, path string) {
 
 func newEnv(t *testing.T, conf string) env {
 	t.Helper()
-	e := env{origin: newOrigin(t), root: t.TempDir()}
+	e := env{origin: newOrigin(t), root: t.TempDir(), h: &hooks{stderr: os.Stderr}}
 	t.Chdir(e.root)
 	e.home = filepath.Join(e.root, "home")
 	e.roles = filepath.Join(e.home, "roles")
@@ -133,9 +143,36 @@ func (e env) calls(t *testing.T) [][2]string {
 	return calls
 }
 
+// app is prf's command line with the env's hooks.
+func (e env) app() *cli.Command {
+	return newApp(e.h.stderr, e.h.rt)
+}
+
+// run runs the app in-process with the env's home, returning its exit code.
 func (e env) run(t *testing.T, args ...string) int {
 	t.Helper()
-	return runPrf(t, append([]string{"--home", e.home}, args...)...)
+	code, _ := e.runIO(t, args...)
+	return code
+}
+
+// runIO runs the app in-process with the env's home, returning its exit
+// code and stdout.
+func (e env) runIO(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	return runApp(t, e.app(), "", append([]string{"--home", e.home}, args...)...)
+}
+
+// runErr runs the app in-process with the env's home, returning its exit
+// code and the message it exits with.
+func (e env) runErr(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	app := e.app()
+	app.Reader, app.Writer = strings.NewReader(""), io.Discard
+	err := app.Run(context.Background(), append([]string{"prf", "--home", e.home}, args...))
+	if err == nil {
+		return 0, ""
+	}
+	return exitCode(t, err), err.Error()
 }
 
 // runPrf runs the app in-process and returns its exit code.
@@ -148,8 +185,12 @@ func runPrf(t *testing.T, args ...string) int {
 // runPrfIO runs the app in-process with stdin, returning its exit code and stdout.
 func runPrfIO(t *testing.T, stdin string, args ...string) (int, string) {
 	t.Helper()
+	return runApp(t, newApp(os.Stderr, job.Runtime{}), stdin, args...)
+}
+
+func runApp(t *testing.T, app *cli.Command, stdin string, args ...string) (int, string) {
+	t.Helper()
 	var out strings.Builder
-	app := newApp()
 	app.Reader, app.Writer = strings.NewReader(stdin), &out
 	err := app.Run(context.Background(), append([]string{"prf"}, args...))
 	return exitCode(t, err), out.String()
@@ -164,7 +205,7 @@ func exitCode(t *testing.T, err error) int {
 		return ec.ExitCode()
 	}
 	t.Logf("error: %v", err)
-	return exitUsage
+	return job.ExitUsage
 }
 
 func TestRunWithConfigDefaults(t *testing.T) {
@@ -232,8 +273,8 @@ func TestRunCloneExists(t *testing.T) {
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
 	before, _ := os.ReadFile(filepath.Join(jobDir, "status"))
 	beforeState, _ := os.ReadFile(filepath.Join(jobDir, state.FileName))
-	if code := e.run(t, args...); code != exitSetup {
-		t.Fatalf("second run: exit %d, want %d", code, exitSetup)
+	if code := e.run(t, args...); code != job.ExitSetup {
+		t.Fatalf("second run: exit %d, want %d", code, job.ExitSetup)
 	}
 	after, _ := os.ReadFile(filepath.Join(jobDir, "status"))
 	afterState, _ := os.ReadFile(filepath.Join(jobDir, state.FileName))
@@ -408,8 +449,8 @@ func TestEmptyPrompt(t *testing.T) {
 	pr := filepath.Join(e.root, "spec.md")
 	writeFileT(t, pr, "")
 
-	if code := e.run(t, "run", "--repo", e.origin, "--pr", pr, "--role", "raw"); code != exitUsage {
-		t.Fatalf("exit %d, want %d", code, exitUsage)
+	if code := e.run(t, "run", "--repo", e.origin, "--pr", pr, "--role", "raw"); code != job.ExitUsage {
+		t.Fatalf("exit %d, want %d", code, job.ExitUsage)
 	}
 	if calls := e.calls(t); calls != nil {
 		t.Errorf("claude ran with an empty prompt: %v", calls)
@@ -454,8 +495,8 @@ func TestCodebaseContext(t *testing.T) {
 
 	// A failing setup command stops the job before Claude runs.
 	writeFileT(t, filepath.Join(e.home, "app", pipeline.FileName), `{"pipelines": {}, "setup": ["exit 7"]}`)
-	if code := run("broken"); code != exitSetup {
-		t.Errorf("failing setup: exit %d, want %d", code, exitSetup)
+	if code := run("broken"); code != job.ExitSetup {
+		t.Errorf("failing setup: exit %d, want %d", code, job.ExitSetup)
 	}
 	if calls := e.calls(t); calls != nil {
 		t.Errorf("claude ran after a failed setup: %v", calls)
@@ -495,7 +536,7 @@ func TestRelativeClaudePath(t *testing.T) {
 	if err := os.Chmod(filepath.Join(e.root, "bin", "fake"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	captureStderr(t)
+	e.captureStderr()
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "review", "--claude", "bin/fake"); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -523,8 +564,8 @@ func TestUsageErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if code := e.run(t, tt.args...); code != exitUsage {
-				t.Errorf("exit %d, want %d", code, exitUsage)
+			if code := e.run(t, tt.args...); code != job.ExitUsage {
+				t.Errorf("exit %d, want %d", code, job.ExitUsage)
 			}
 		})
 	}
@@ -600,24 +641,19 @@ func (s *syncBuffer) String() string {
 }
 
 // captureStderr sends prf's progress output to a buffer for the test.
-func captureStderr(t *testing.T) *syncBuffer {
-	t.Helper()
+func (e env) captureStderr() *syncBuffer {
 	buf := &syncBuffer{}
-	prev := stderr
-	stderr = buf
-	t.Cleanup(func() { stderr = prev })
+	e.h.stderr = buf
 	return buf
 }
 
 func TestProgressOutput(t *testing.T) {
 	e := newEnv(t, "")
 	writeRole(t, e.roles, "test", "SLOW test")
-	prev := heartbeatEvery
-	heartbeatEvery = 100 * time.Millisecond
-	t.Cleanup(func() { heartbeatEvery = prev })
+	e.h.rt.Heartbeat = 100 * time.Millisecond
 
-	errOut := captureStderr(t)
-	code, out := runPrfIO(t, "", "--home", e.home, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "implement,test")
+	errOut := e.captureStderr()
+	code, out := e.runIO(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "implement,test")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, errOut)
 	}
@@ -658,7 +694,7 @@ func TestProgressOutput(t *testing.T) {
 	}
 
 	// --verbose puts Claude's steps on stderr too.
-	errOut = captureStderr(t)
+	errOut = e.captureStderr()
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "v", "--prompt", "x", "--role", "implement", "-v"); code != 0 {
 		t.Fatalf("verbose: exit %d", code)
 	}
@@ -674,7 +710,7 @@ func TestProgressOutput(t *testing.T) {
 func TestReportedErrorFailsPhase(t *testing.T) {
 	e := newEnv(t, "")
 	writeRole(t, e.roles, "test", "ERROR")
-	captureStderr(t)
+	e.captureStderr()
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x"); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
@@ -709,7 +745,7 @@ func TestStepModels(t *testing.T) {
   "model": "haiku",
   "pipelines": {"feature": [{"role": "implement", "model": "opus"}, "test", {"role": "review", "model": "claude-sonnet-5-5[1m]"}]}
 }`)
-	errOut := captureStderr(t)
+	errOut := e.captureStderr()
 
 	tests := []struct {
 		name string
@@ -744,13 +780,13 @@ func TestStepModels(t *testing.T) {
 	if !strings.Contains(errOut.String(), "prf: [1/3] implement (opus): started\n") {
 		t.Errorf("progress should name the model:\n%s", errOut)
 	}
-	_, text := runPrfIO(t, "", "--home", e.home, "status", "--repo", "app")
+	_, text := e.runIO(t, "status", "--repo", "app")
 	if !strings.Contains(text, "review (claude-sonnet-5-5[1m])") {
 		t.Errorf("prf status should show the last step's model:\n%s", text)
 	}
 
-	if code := e.run(t, "run", "--repo", "app", "--branch", "x", "--prompt", "x", "--role", "test:bad model"); code != exitUsage {
-		t.Errorf("invalid model in --role: exit %d, want %d", code, exitUsage)
+	if code := e.run(t, "run", "--repo", "app", "--branch", "x", "--prompt", "x", "--role", "test:bad model"); code != job.ExitUsage {
+		t.Errorf("invalid model in --role: exit %d, want %d", code, job.ExitUsage)
 	}
 }
 
@@ -770,8 +806,8 @@ func TestPipelineSetWithModels(t *testing.T) {
 	if code, out := prf(t, h, "", "pipeline", "show", "feature", "--repo", "app"); code != 0 || out != "implement:opus\ntest\nreview:haiku\n" {
 		t.Errorf("show = %d %q", code, out)
 	}
-	if code, _ := prf(t, h, "", "pipeline", "set", "bad", "--repo", "app", "--roles", "implement:,test"); code != exitUsage {
-		t.Errorf("empty model after the colon: exit %d, want %d", code, exitUsage)
+	if code, _ := prf(t, h, "", "pipeline", "set", "bad", "--repo", "app", "--roles", "implement:,test"); code != job.ExitUsage {
+		t.Errorf("empty model after the colon: exit %d, want %d", code, job.ExitUsage)
 	}
 }
 
@@ -797,7 +833,7 @@ func TestCostCaps(t *testing.T) {
   "max_step_cost": 1,
   "pipelines": {"default": ["implement", {"role": "test", "max_cost": 2}, "review"]}
 }`)
-	captureStderr(t)
+	e.captureStderr()
 
 	tests := []struct {
 		name string
@@ -822,8 +858,8 @@ func TestCostCaps(t *testing.T) {
 
 	t.Run("job cap used up stops before the next step", func(t *testing.T) {
 		removeFile(t, e.log)
-		if code := e.run(t, "run", "--repo", "app", "--branch", "d", "--prompt", "x", "--max-cost", "0.10"); code != exitBudget {
-			t.Fatalf("exit %d, want %d", code, exitBudget)
+		if code := e.run(t, "run", "--repo", "app", "--branch", "d", "--prompt", "x", "--max-cost", "0.10"); code != job.ExitBudget {
+			t.Fatalf("exit %d, want %d", code, job.ExitBudget)
 		}
 		if n := len(e.calls(t)); n != 2 {
 			t.Errorf("got %d calls, want 2: review must not start with nothing left", n)
@@ -838,8 +874,8 @@ func TestCostCaps(t *testing.T) {
 		writeRole(t, e.roles, "test", "BUDGET")
 		t.Cleanup(func() { writeRole(t, e.roles, "test", "test on {{.Branch}}") })
 		removeFile(t, e.log)
-		if code := e.run(t, "run", "--repo", "app", "--branch", "f", "--prompt", "x"); code != exitBudget {
-			t.Fatalf("exit %d, want %d", code, exitBudget)
+		if code := e.run(t, "run", "--repo", "app", "--branch", "f", "--prompt", "x"); code != job.ExitBudget {
+			t.Fatalf("exit %d, want %d", code, job.ExitBudget)
 		}
 		if n := len(e.calls(t)); n != 2 {
 			t.Errorf("got %d calls, want 2", n)
@@ -861,7 +897,7 @@ func TestRunJobEnv(t *testing.T) {
 			"job_seed": [{"from": "`+filepath.Join(shared, "go-build")+`", "to": "{{job}}/cache/go-build"}, {"from": "/no/such/dir", "to": "{{job}}/cache/gone"}]},
 		"plain": "{{origin}}"
 	}`)
-	errOut := captureStderr(t)
+	errOut := e.captureStderr()
 
 	if code := e.run(t, "run", "--repo", "app", "--branch", "b", "--role", "review"); code != 0 {
 		t.Fatalf("exit %d", code)

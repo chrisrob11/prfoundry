@@ -3,44 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/human"
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/urfave/cli/v3"
 )
-
-// setState applies change to the job's state and rewrites state.json. It's
-// safe to call from the progress goroutine.
-func (j *job) setState(change func(s *state.Job)) {
-	if j.jobDir == "" {
-		return
-	}
-	j.stateMu.Lock()
-	defer j.stateMu.Unlock()
-	if j.state.Started.IsZero() {
-		j.state = state.Job{
-			Repo: j.name, Job: filepath.Base(j.jobDir), JobDir: j.jobDir,
-			PID: os.Getpid(), Started: time.Now(), State: state.Setup,
-		}
-	}
-	change(&j.state)
-	j.state.Branch, j.state.Dir, j.state.Updated = j.branch, j.dir, time.Now()
-	if err := state.Write(j.jobDir, j.state); err != nil {
-		logf("writing %s: %v", state.FileName, err)
-	}
-}
-
-// setupStage records which setup step the job is on.
-func (j *job) setupStage(stage string) {
-	j.setState(func(s *state.Job) { s.State, s.Stage = state.Setup, "setup: "+stage })
-}
 
 func (a *app) statusCmd() *cli.Command {
 	return &cli.Command{
@@ -58,7 +31,7 @@ func (a *app) statusCmd() *cli.Command {
 		Action: func(ctx context.Context, c *cli.Command) error {
 			states, err := state.List(flagOr(c, "workdir", a.cfg.Workdir), c.String("repo"))
 			if err != nil {
-				return cli.Exit("prf: "+err.Error(), exitUsage)
+				return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 			}
 			w := c.Root().Writer
 			if c.Bool("json") {
@@ -133,4 +106,9 @@ func detailOf(s state.Job) string {
 		parts = append(parts, fmt.Sprintf("$%.2f", s.Cost))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// pausedDetail is a paused job's status detail.
+func pausedDetail(s state.Job) string {
+	return fmt.Sprintf("usage limit; step re-runs at %s", s.ResumeAt.Local().Format("Jan 2 3:04pm"))
 }

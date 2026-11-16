@@ -13,6 +13,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
 	"github.com/chrisrob11/prfoundry/internal/itemname"
+	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
@@ -155,7 +156,7 @@ func (a *app) roleShow(ctx context.Context, c *cli.Command) error {
 	}
 	e := findRoleEntry(a.home, repo, name)
 	if e == nil {
-		return cli.Exit(fmt.Sprintf("prf: no role %q in %s", name, strings.Join(roles.Dirs(a.home, repo), " or ")), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: no role %q in %s", name, strings.Join(roles.Dirs(a.home, repo), " or ")), job.ExitUsage)
 	}
 	if c.Bool("json") {
 		return jsonio.Write(c.Root().Writer, e)
@@ -176,14 +177,14 @@ func (a *app) roleSet(ctx context.Context, c *cli.Command) error {
 		text, err = io.ReadAll(c.Root().Reader)
 	}
 	if err != nil {
-		return cli.Exit("prf: reading role: "+err.Error(), exitUsage)
+		return cli.Exit("prf: reading role: "+err.Error(), job.ExitUsage)
 	}
 	if err := roles.Validate(name, string(text)); err != nil {
-		return cli.Exit("prf: not saved: "+err.Error(), exitUsage)
+		return cli.Exit("prf: not saved: "+err.Error(), job.ExitUsage)
 	}
 	path := filepath.Join(roles.Dirs(a.home, repo)[0], name+".md")
 	if err := atomicfile.Write(path, text); err != nil {
-		return cli.Exit("prf: "+err.Error(), exitSetup)
+		return cli.Exit("prf: "+err.Error(), job.ExitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "saved role %s %s\n", name, path)
 	return nil
@@ -196,9 +197,9 @@ func (a *app) roleRemove(ctx context.Context, c *cli.Command) error {
 	}
 	path := filepath.Join(roles.Dirs(a.home, repo)[0], name+".md")
 	if err := os.Remove(path); errors.Is(err, fs.ErrNotExist) {
-		return cli.Exit(fmt.Sprintf("prf: no role %q at %s", name, path), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: no role %q at %s", name, path), job.ExitUsage)
 	} else if err != nil {
-		return cli.Exit("prf: "+err.Error(), exitSetup)
+		return cli.Exit("prf: "+err.Error(), job.ExitSetup)
 	}
 	w := c.Root().Writer
 	_, _ = fmt.Fprintf(w, "removed role %s %s\n", name, path)
@@ -215,11 +216,11 @@ func (a *app) roleReset(ctx context.Context, c *cli.Command) error {
 	}
 	b, err := fs.ReadFile(roles.Builtin(), name+".md")
 	if err != nil {
-		return cli.Exit(fmt.Sprintf("prf: no built-in role %q", name), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: no built-in role %q", name), job.ExitUsage)
 	}
 	path := filepath.Join(roles.Dirs(a.home, "")[0], name+".md")
 	if err := atomicfile.Write(path, b); err != nil {
-		return cli.Exit("prf: "+err.Error(), exitSetup)
+		return cli.Exit("prf: "+err.Error(), job.ExitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "reset role %s %s\n", name, path)
 	return nil
@@ -244,11 +245,11 @@ func repoAndRoleName(c *cli.Command) (repo, name string, err error) {
 // nameArg returns the single <name> argument.
 func nameArg(c *cli.Command, kind string) (string, error) {
 	if c.Args().Len() != 1 {
-		return "", cli.Exit(fmt.Sprintf("prf: give exactly one %s name", kind), exitUsage)
+		return "", cli.Exit(fmt.Sprintf("prf: give exactly one %s name", kind), job.ExitUsage)
 	}
 	name := c.Args().First()
 	if !itemname.Valid(name) {
-		return "", cli.Exit(fmt.Sprintf("prf: invalid %s name %q: use letters, digits, '-', '_' and '.'", kind, name), exitUsage)
+		return "", cli.Exit(fmt.Sprintf("prf: invalid %s name %q: use letters, digits, '-', '_' and '.'", kind, name), job.ExitUsage)
 	}
 	return name, nil
 }
