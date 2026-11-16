@@ -10,28 +10,27 @@ make build    # bin/prf
 approval to merge.
 
 The tests run the whole CLI in-process against throwaway git repos and a fake `claude` script that
-speaks stream-json, so they need `git` but not Claude, and cost no tokens. To time the codebase
+speaks stream-json, so they need `git` but not Claude, and cost no tokens. They watch a job, or speed
+it up, through `job.Runtime` and the app's stderr, not package variables. To time the codebase
 map on a real repo: `PRF_BENCH_DIR=~/code/big go test ./internal/codeindex -run x -bench Build`.
 
-The CLI and the job runner are in `cmd/prf`; self-contained pieces are packages under `internal/`.
+The CLI is in `cmd/prf`: it turns flags, `conf.json` and `pipeline.json` into a `job.Options`,
+and runs the job. Everything else is a package under `internal/`.
 
 | Path | What's in it |
 |---|---|
-| `cmd/prf/main.go` | Commands, flags, the `job` struct, and how `run` and `apply` assemble a job |
-| `cmd/prf/run.go` | Running the roles, progress output, status lines, cloning and switching branches |
-| `cmd/prf/stream.go` | Reading Claude's stream-json events into the step feed and result |
-| `cmd/prf/state.go` | `state.json` and `prf status` |
-| `cmd/prf/costs.go` | `prf costs` |
-| `cmd/prf/ship.go` | Pushing and opening the PR after the last step |
+| `cmd/prf/main.go` | Commands and flags, and how `run` and `apply` build a job's options |
+| `cmd/prf/status.go`, `costs.go` | `prf status` and `prf costs` |
 | `cmd/prf/lifecycle.go` | `prf resume` and `prf clean` |
 | `cmd/prf/config.go` | `app` (the loaded home and `conf.json` every command reads), `config` and `config init` |
-| `cmd/prf/roles.go`, `rolecmd.go` | A job's phases from its roles; `prf role` |
-| `cmd/prf/pipelinecmd.go` | `prf pipeline`, and checking a pipeline's roles |
-| `cmd/prf/review.go`, `review.html` | The `@review` gate and its review page |
-| `cmd/prf/ask.go` | The `@ask` gate |
-| `cmd/prf/check.go` | The `@check` gate |
-| `cmd/prf/limit.go` | Waiting out Claude's usage limit (the `paused` state) |
-| `cmd/prf/context.go` | Preparing `<job>/context`: setup commands and `prf index` |
+| `cmd/prf/rolecmd.go`, `pipelinecmd.go` | `prf role`; `prf pipeline`, and checking a pipeline's roles |
+| `cmd/prf/indexcmd.go` | `prf index` |
+| `internal/job` | One job: `Run` (clone, then set up), `Apply` (an existing checkout), `Resume`; the phase loop and status lines (`run.go`), setup (`setup.go`), the gates (`gate_check.go`, `gate_review.go`, `gate_ask.go`), the usage-limit pause, `<job>/context`, shipping |
+| `internal/claude` | A `claude -p` call's arguments, reading its stream-json, and its usage-limit error |
+| `internal/state` | `state.json`: writing it, finding and listing jobs, and summing their spend |
+| `internal/review` | The review page the `@review` and `@ask` gates serve (`review.html`), and their saved rounds |
+| `internal/ship` | Pushing the branch and opening its PR |
+| `internal/human` | A text's first line, durations and dollars, for progress lines and tables |
 | `internal/config` | `conf.json`: its types, reading and checking it, the default home, `~` expansion |
 | `internal/jobenv` | `job_env` and `job_seed`: the job's `mise.toml`, seed copies, and the folders steps may write |
 | `internal/sandbox` | The Claude Code sandbox settings file: its defaults and where it's found |
