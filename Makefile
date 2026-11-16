@@ -5,7 +5,7 @@ GOLANGCI_LINT ?= golangci-lint
 # slightly. Raise it when coverage rises; never lower it to pass.
 COVER_FLOOR ?= 89
 
-.PHONY: build test cover cover-check lint fmt fmt-check ci install
+.PHONY: build test cover cover-check lint slop fmt fmt-check ci install
 
 build:
 	go build -o bin/prf ./cmd/prf
@@ -32,6 +32,13 @@ cover-check: cover
 lint:
 	$(GOLANGCI_LINT) run ./...
 
+# slop runs gosloplint, pinned in go.mod as a tool: its analyzers through go vet, then
+# dupl, which finds copies across packages that a per-package analyzer can't see. It
+# runs every analyzer on its defaults, and with no baseline: the code has no findings.
+slop:
+	go vet -vettool="$$(go tool -n gosloplint)" ./...
+	go tool gosloplint dupl ./...
+
 fmt:
 	$(GOLANGCI_LINT) fmt ./...
 
@@ -40,4 +47,4 @@ fmt-check:
 
 # ci is exactly what GitHub Actions runs; run it before pushing.
 # cover-check runs the tests, so ci does not run them a second time.
-ci: fmt-check lint cover-check build
+ci: fmt-check lint slop cover-check build
