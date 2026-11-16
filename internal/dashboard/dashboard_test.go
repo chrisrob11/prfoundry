@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -29,7 +30,7 @@ func start(t *testing.T, o Options) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() { srv.Close(context.Background()) })
 	return srv
 }
 
@@ -118,7 +119,7 @@ func TestTheURLIsStable(t *testing.T) {
 		t.Fatal(err)
 	}
 	url := first.URL()
-	first.Close()
+	first.Close(t.Context())
 	second := start(t, Options{Workdir: t.TempDir(), Link: link})
 	if second.URL() != url {
 		t.Errorf("restarted at %s, want %s", second.URL(), url)

@@ -332,9 +332,10 @@ func (s *Server) Submitted() <-chan Round {
 	return s.submitted
 }
 
-// Close stops serving the page.
-func (s *Server) Close() {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+// Close stops serving the page, giving open requests a second. ctx's
+// cancellation, usually what ended the job, doesn't cut that second short.
+func (s *Server) Close(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 	defer cancel()
 	_ = s.srv.Shutdown(ctx) // the job is done with the page; open connections just drop
 	// Serve may not have started yet, and then Shutdown cannot see the listener:

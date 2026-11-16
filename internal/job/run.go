@@ -2,6 +2,7 @@ package job
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -34,7 +35,7 @@ import (
 // instead, running its fix role on each round of requested changes; an ask
 // gate shows you the question the step before it left, if any; a check gate
 // runs a command, having its fix role fix what fails. Every step gets <job>/tmp as PRF_TMP.
-func (j *Job) runPhases(phases []phase) (err error) {
+func (j *Job) runPhases(ctx context.Context, phases []phase) (err error) {
 	logFile, err := openAppend(j.out)
 	if err != nil {
 		j.logf("opening output: %v", err)
@@ -59,10 +60,9 @@ func (j *Job) runPhases(phases []phase) (err error) {
 		j.feed = io.MultiWriter(logFile, j.stderr)
 	}
 
-	// Catch Ctrl-C, TERM and a closed terminal (HUP) so Claude (same process
-	// group) handles them and we still report PRF_DONE afterwards. A gate
-	// waits on them, and a check gate stops its command, which has a group
-	// of its own.
+	// Catch Ctrl-C, TERM and HUP so Claude (same process group) handles them
+	// and we still report PRF_DONE. A gate waits on them; a check gate stops
+	// its command, which has a process group of its own.
 	j.sigs = make(chan os.Signal, 1)
 	signal.Notify(j.sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(j.sigs)
@@ -102,11 +102,11 @@ func (j *Job) runPhases(phases []phase) (err error) {
 		var code int
 		switch p.gate {
 		case pipeline.GateReview:
-			code = j.reviewGate(p, step, model, data)
+			code = j.reviewGate(ctx, p, step, model, data)
 		case pipeline.GateAsk:
-			code = j.askGate(p, step, model, data)
+			code = j.askGate(ctx, p, step, model, data)
 		case pipeline.GateCheck:
-			code = j.commandGate(p, step, model, data)
+			code = j.commandGate(ctx, p, step, model, data)
 		default:
 			n := j.firstStep + i + 1
 			code = j.runClaude(p, p.name, step, model, j.priorRun(n, data), i == 0)
@@ -146,6 +146,30 @@ func (j *Job) runClaude(p phase, name, step, model string, data roles.Data, firs
 			return 130
 		}
 		first = false // a streamed --in was read by the first try
+	}
+}
+
+// limitMargin is how long past the stated reset a paused step waits, so it
+// doesn't start a moment early by a clock's difference.
+const limitMargin = 5 * time.Minute
+
+// pauseUntil marks the job paused until reset and waits it out, returning
+// false if a signal stopped the wait.
+func (j *Job) pauseUntil(step, name string, reset time.Time) bool {
+	wait := max(j.rt.PauseFor(reset), 0)
+	at := time.Now().Add(wait)
+	j.event("PRF_PAUSE branch=%s phase=%s step=%s until=%s", j.branch, name, step, at.Format(time.RFC3339))
+	j.logf("[%s] %s: hit the usage limit; paused until %s, then this step runs again", step, name, at.Format("Jan 2 3:04pm"))
+	j.setState(func(s *state.Job) { s.State, s.ResumeAt, s.Activity = state.Paused, at, "" })
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		j.setState(func(s *state.Job) { s.ResumeAt = time.Time{} })
+		return true
+	case sig := <-j.sigs:
+		j.logf("[%s] %s: stopped while paused (%v)", step, name, sig)
+		return false
 	}
 }
 

@@ -86,7 +86,7 @@ func (a *app) resume(ctx context.Context, c *cli.Command) error {
 	if !c.IsSet("push") && !c.IsSet("pr-create") {
 		o.Push, o.PRCreate = st.Push, st.PRCreate // ship the way the job was started
 	}
-	return job.Resume(o, st, from)
+	return job.Resume(ctx, o, st, from)
 }
 
 func (a *app) cleanCmd() *cli.Command {

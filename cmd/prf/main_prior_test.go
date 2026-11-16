@@ -23,7 +23,10 @@ func TestPriorRun(t *testing.T) {
 	jobDir := filepath.Join(e.root, "work", "origin", "b")
 	st := readState(t, jobDir)
 	clone := filepath.Join(jobDir, "repo")
-	head := mustGit(t, clone, "rev-parse", "HEAD")
+	head, err := gitOut(clone, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(st.StepHeads) != 2 || st.StepHeads[2] != head || st.StepHeads[1] == "" {
 		t.Errorf("step_heads = %v, want step 2 at %s", st.StepHeads, head)
 	}

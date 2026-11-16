@@ -63,7 +63,7 @@ func TestFileAtHead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer srv.Close(t.Context())
 	get := func(path string) (int, map[string]string) {
 		res, err := http.Get(srv.URL() + "api/file?path=" + url.QueryEscape(path))
 		if err != nil {

@@ -56,7 +56,7 @@ type checkRun struct {
 // the command still fails after max_rounds fixes, ExitSetup if the command
 // can't start or be sandboxed, or 130 if interrupted. A resumed gate numbers
 // its rounds after the ones already saved.
-func (j *Job) commandGate(p phase, step, model string, data roles.Data) int {
+func (j *Job) commandGate(ctx context.Context, p phase, step, model string, data roles.Data) int {
 	n, _, _ := strings.Cut(step, "/")
 	dir := filepath.Join(j.jobDir, "checks", "step-"+n)
 	command := cmp.Or(p.run, j.checkCmd)
@@ -88,7 +88,7 @@ func (j *Job) commandGate(p phase, step, model string, data roles.Data) int {
 		})
 		j.logf("[%s] %s: round %d: running %s", step, p.name, round, command)
 		start := time.Now()
-		out, code, err := j.runCommand(command, p.timeout, run)
+		out, code, err := j.runCommand(ctx, command, p.timeout, run)
 		logFile := filepath.Join(dir, fmt.Sprintf("round-%d.log", round))
 		if werr := textfile.Write(logFile, out); werr != nil {
 			j.logf("saving the output: %v", werr)
@@ -145,13 +145,13 @@ func (j *Job) commandGate(p phase, step, model string, data roles.Data) int {
 // returns its combined output and exit code (128+n if signal n killed it);
 // the output also goes to the log. When it ends, anything it left running is
 // killed. It stops the command, and everything it started, at timeout (0 for
-// none), returning context.DeadlineExceeded, or when prf is interrupted,
-// returning errInterrupted: SIGTERM first, then SIGKILL after j.grace.
-// Any other error means it didn't start.
-func (j *Job) runCommand(command string, timeout time.Duration, run checkRun) (string, int, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+// none), returning context.DeadlineExceeded, or when prf is interrupted or
+// ctx is done, returning errInterrupted: SIGTERM first, then SIGKILL after
+// j.grace. Any other error means it didn't start.
+func (j *Job) runCommand(ctx context.Context, command string, timeout time.Duration, run checkRun) (string, int, error) {
+	runCtx, cancel := context.WithCancel(ctx)
 	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
 	var out bytes.Buffer
@@ -169,7 +169,7 @@ func (j *Job) runCommand(command string, timeout time.Duration, run checkRun) (s
 	if run.sandbox != "" {
 		name, args = srtBinary, []string{"-s", run.sandbox, "-c", args[1]}
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(runCtx, name, args...)
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = j.dir, env, w, w
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} // its own group, so stopping it stops its children
 	var stopped atomic.Bool
@@ -194,10 +194,10 @@ func (j *Job) runCommand(command string, timeout time.Duration, run checkRun) (s
 	}
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // whatever it left running
 	switch {
-	case interrupted:
+	case interrupted || stopped.Load() && ctx.Err() != nil:
 		return out.String(), 130, errInterrupted
-	case stopped.Load() && errors.Is(ctx.Err(), context.DeadlineExceeded):
-		return out.String(), 124, ctx.Err() // 124, as timeout(1) exits
+	case stopped.Load() && errors.Is(runCtx.Err(), context.DeadlineExceeded):
+		return out.String(), 124, runCtx.Err() // 124, as timeout(1) exits
 	case cmd.ProcessState == nil:
 		return out.String(), 0, err
 	}

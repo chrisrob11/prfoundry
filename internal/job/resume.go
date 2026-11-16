@@ -2,6 +2,7 @@ package job
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -21,7 +22,7 @@ import (
 // setup isn't repeated, and steps keep their numbers. o's Steps, Out and
 // Status aren't used: the steps are st's, and the log and status file stay
 // in the job folder. Its error is the job's outcome, with prf's exit code.
-func Resume(o Options, st state.Job, from int) error {
+func Resume(ctx context.Context, o Options, st state.Job, from int) error {
 	// An ask gate re-runs the step before it, so a resume there loads that
 	// step too, then drops it.
 	first := from - 1
@@ -67,5 +68,5 @@ func Resume(o Options, st state.Job, from int) error {
 	st.PID, st.Exit, st.Activity = os.Getpid(), nil, ""
 	j.state = st
 	j.logf("resuming %s/%s from step %d/%d (%s)", st.Repo, st.Job, from, len(st.Roles), st.Roles[from-1])
-	return j.runPhases(phases)
+	return j.runPhases(ctx, phases)
 }

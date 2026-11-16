@@ -24,10 +24,10 @@ func TestCloneRepo(t *testing.T) {
 			if err := cloneRepo(origin, "", tt.branch, dir, "", t.Logf); err != nil {
 				t.Fatal(err)
 			}
-			if got := mustGit(t, dir, "branch", "--show-current"); got != tt.branch {
-				t.Errorf("branch = %q, want %q", got, tt.branch)
+			if got, err := gitOut(dir, "branch", "--show-current"); err != nil || got != tt.branch {
+				t.Errorf("branch = %q, %v; want %q", got, err, tt.branch)
 			}
-			if got := mustGit(t, dir, "log", "-1", "--format=%s"); got != tt.wantSubject {
+			if got, err := gitOut(dir, "log", "-1", "--format=%s"); err != nil || got != tt.wantSubject {
 				t.Errorf("HEAD subject = %q, want %q", got, tt.wantSubject)
 			}
 		})
@@ -45,8 +45,8 @@ func TestCloneRepo(t *testing.T) {
 		if err := cloneRepo(origin, "existing", "feat/on-existing", dir, "", t.Logf); err != nil {
 			t.Fatal(err)
 		}
-		if got := mustGit(t, dir, "log", "-1", "--format=%s"); got != "on existing" {
-			t.Errorf("HEAD subject = %q, want branch cut from existing", got)
+		if got, err := gitOut(dir, "log", "-1", "--format=%s"); err != nil || got != "on existing" {
+			t.Errorf("HEAD subject = %q, %v; want branch cut from existing", got, err)
 		}
 	})
 }
@@ -54,7 +54,7 @@ func TestCloneRepo(t *testing.T) {
 func TestCloneRepoWithReference(t *testing.T) {
 	origin := newOrigin(t)
 	checkout := filepath.Join(t.TempDir(), "checkout")
-	mustGit(t, "", "clone", "-q", origin, checkout)
+	runGit(t, "", "clone", "-q", origin, checkout)
 
 	for name, reference := range map[string]string{"local checkout": checkout, "not a repo": t.TempDir(), "missing": "/nonexistent"} {
 		t.Run(name, func(t *testing.T) {
@@ -62,8 +62,8 @@ func TestCloneRepoWithReference(t *testing.T) {
 			if err := cloneRepo(origin, "", "feat/x", dir, reference, t.Logf); err != nil {
 				t.Fatal(err)
 			}
-			if got := mustGit(t, dir, "log", "-1", "--format=%s"); got != "init" {
-				t.Errorf("HEAD subject = %q", got)
+			if got, err := gitOut(dir, "log", "-1", "--format=%s"); err != nil || got != "init" {
+				t.Errorf("HEAD subject = %q, %v", got, err)
 			}
 			// --dissociate: the clone keeps no link to the reference's objects.
 			if _, err := os.Stat(filepath.Join(dir, ".git", "objects", "info", "alternates")); err == nil {
@@ -78,8 +78,8 @@ func TestSwitchBranchLocal(t *testing.T) {
 	if err := switchBranch(dir, "existing", t.Logf); err != nil {
 		t.Fatal(err)
 	}
-	if got := mustGit(t, dir, "log", "-1", "--format=%s"); got != "on existing" {
-		t.Errorf("switched to a new branch instead of the local one: HEAD = %q", got)
+	if got, err := gitOut(dir, "log", "-1", "--format=%s"); err != nil || got != "on existing" {
+		t.Errorf("switched to a new branch instead of the local one: HEAD = %q, %v", got, err)
 	}
 }
 

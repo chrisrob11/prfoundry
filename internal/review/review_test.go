@@ -29,7 +29,7 @@ func TestReviewServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer srv.Close(t.Context())
 	if !strings.Contains(srv.URL(), "/app/my-job/") {
 		t.Errorf("url %s doesn't name the job", srv.URL())
 	}
@@ -114,7 +114,7 @@ func TestReviewLinkIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Close()
+	first.Close(t.Context())
 	again, err := Start(Options{Dir: dir, Repo: "app", Job: "login", Activity: func() string { return "" }, Logf: t.Logf})
 	if err != nil {
 		t.Fatal(err)
@@ -128,8 +128,8 @@ func TestReviewLinkIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer other.Close()
-	again.Close()
+	defer other.Close(t.Context())
+	again.Close(t.Context())
 	token := func(url string) string {
 		parts := strings.Split(strings.TrimSuffix(url, "/"), "/")
 		return parts[len(parts)-1]
@@ -154,7 +154,7 @@ func TestAskSubmissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Close()
+	defer srv.Close(t.Context())
 	srv.Set(PageWaiting, View{Kind: pipeline.GateAsk, Round: 1})
 	post := func(body string) int {
 		res, err := http.Post(srv.URL()+"api/submit", "application/json", strings.NewReader(body))

@@ -2,6 +2,7 @@ package job
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -51,7 +52,7 @@ func notify(title, msg string) {
 // max_rounds rounds of changes, or 130 if interrupted while waiting. A
 // resumed gate picks up the rounds in <job>/reviews, addressing a round
 // of changes the job stopped before finishing.
-func (j *Job) reviewGate(p phase, step, model string, data roles.Data) int {
+func (j *Job) reviewGate(ctx context.Context, p phase, step, model string, data roles.Data) int {
 	dir := filepath.Join(j.jobDir, "reviews")
 	rounds, err := review.ReadRounds(dir)
 	if err != nil {
@@ -63,7 +64,7 @@ func (j *Job) reviewGate(p phase, step, model string, data roles.Data) int {
 		j.logf("starting the review page: %v", err)
 		return ExitSetup
 	}
-	defer srv.Close()
+	defer srv.Close(ctx)
 
 	j.event("PRF_START branch=%s phase=%s step=%s pipeline=%s", j.branch, p.name, step, j.pipeline)
 	start, fixes := time.Now(), 0
@@ -98,33 +99,15 @@ func (j *Job) reviewGate(p phase, step, model string, data roles.Data) int {
 		}
 
 		view := j.reviewView(rounds, len(rounds)+1)
-		srv.Set(review.PageWaiting, view)
-		j.setState(func(s *state.Job) {
-			s.State, s.Stage, s.Activity, s.ReviewURL = state.Review, p.name, fmt.Sprintf("round %d", view.Round), srv.URL()
+		r, ok := j.awaitRound(srv, view, dir, p, step, pageWait{
+			state: state.Review, activity: fmt.Sprintf("round %d", view.Round), event: "PRF_REVIEW", done: "PRF_REVIEWED",
+			why: fmt.Sprintf("round %d", view.Round), what: "your review", page: "review page", saved: "review",
+			title: "prf: " + j.name + " is ready for review", body: fmt.Sprintf("%s, round %d", j.branch, view.Round),
 		})
-		j.event("PRF_REVIEW branch=%s phase=%s step=%s round=%d url=%s", j.branch, p.name, step, view.Round, srv.URL())
-		j.logf("[%s] %s: round %d: waiting for your review at %s", step, p.name, view.Round, srv.URL())
-		j.rt.Notify("prf: "+j.name+" is ready for review", fmt.Sprintf("%s, round %d", j.branch, view.Round))
-		if j.reviewOpen && !srv.Watched() {
-			if err := j.rt.OpenBrowser(srv.URL()); err != nil {
-				j.logf("opening the review page: %v", err)
-			}
-		}
-
-		var r review.Round
-		select {
-		case r = <-srv.Submitted():
-		case <-j.sigs:
-			j.logf("[%s] %s: interrupted while waiting for your review", step, p.name)
+		if !ok {
 			return end(130, "")
 		}
-		r.Round, r.Commit, r.Submitted = view.Round, view.Head, time.Now()
 		rounds = append(rounds, r)
-		if err := review.WriteRound(dir, r); err != nil {
-			j.logf("saving the review: %v", err)
-		}
-		j.setState(func(s *state.Job) { s.State, s.Activity, s.ReviewURL = state.Running, "", "" })
-		j.event("PRF_REVIEWED branch=%s phase=%s step=%s round=%d verdict=%s comments=%d", j.branch, p.name, step, r.Round, r.Verdict, len(r.Comments))
 		if r.Verdict == review.Approve {
 			srv.Set(review.PageApproved, j.reviewView(rounds, len(rounds)))
 			j.logf("[%s] %s: approved in round %d after %s", step, p.name, r.Round, human.Duration(time.Since(start)))
@@ -132,6 +115,50 @@ func (j *Job) reviewGate(p phase, step, model string, data roles.Data) int {
 		}
 		j.logf("[%s] %s: round %d: changes requested (%d comments)", step, p.name, r.Round, len(r.Comments))
 	}
+}
+
+// pageWait is how a gate waiting on its page says so: the job's state and
+// activity, its events when it waits and once it has the round, its log
+// lines (why it waits, for what, on which page, and what it saves) and the
+// desktop notification's title and body.
+type pageWait struct {
+	state, activity, event, done string
+	why, what, page, saved       string
+	title, body                  string
+}
+
+// awaitRound shows view on srv, says so as w has it, and returns the round
+// posted there, saved in dir, or false if prf is interrupted first.
+func (j *Job) awaitRound(srv *review.Server, view review.View, dir string, p phase, step string, w pageWait) (review.Round, bool) {
+	srv.Set(review.PageWaiting, view)
+	j.setState(func(s *state.Job) {
+		s.State, s.Stage, s.Activity, s.ReviewURL = w.state, p.name, w.activity, srv.URL()
+	})
+	j.event("%s branch=%s phase=%s step=%s round=%d url=%s", w.event, j.branch, p.name, step, view.Round, srv.URL())
+	j.logf("[%s] %s: %s: waiting for %s at %s", step, p.name, w.why, w.what, srv.URL())
+	j.rt.Notify(w.title, w.body)
+	if j.reviewOpen && !srv.Watched() {
+		if err := j.rt.OpenBrowser(srv.URL()); err != nil {
+			j.logf("opening the %s: %v", w.page, err)
+		}
+	}
+	var r review.Round
+	select {
+	case r = <-srv.Submitted():
+	case <-j.sigs:
+		j.logf("[%s] %s: interrupted while waiting for %s", step, p.name, w.what)
+		return r, false
+	}
+	r.Round, r.Commit, r.Submitted = view.Round, view.Head, time.Now()
+	if view.Question != "" {
+		r.Question = view.Question
+	}
+	if err := review.WriteRound(dir, r); err != nil {
+		j.logf("saving the %s: %v", w.saved, err)
+	}
+	j.setState(func(s *state.Job) { s.State, s.Activity, s.ReviewURL = state.Running, "", "" })
+	j.event("%s branch=%s phase=%s step=%s round=%d verdict=%s comments=%d", w.done, j.branch, p.name, step, r.Round, r.Verdict, len(r.Comments))
+	return r, true
 }
 
 // startPage serves the job's review page, which keeps its URL in

@@ -10,10 +10,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/agent"
 	"github.com/chrisrob11/prfoundry/internal/claude"
+	"github.com/chrisrob11/prfoundry/internal/codeindex"
 	"github.com/chrisrob11/prfoundry/internal/config"
+	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/itemname"
 	"github.com/chrisrob11/prfoundry/internal/job"
 	"github.com/chrisrob11/prfoundry/internal/opencode"
@@ -56,28 +59,28 @@ func newApp(stderr io.Writer, rt job.Runtime) *cli.Command {
 		},
 		Before: a.loadConfig,
 		Commands: []*cli.Command{
-			{
+			withPhaseFlags(&cli.Command{
 				Name:      "run",
 				Usage:     "clone a repo into <workdir>/<repo>/<job>/repo, switch to a branch, and run Claude phases on it",
 				ArgsUsage: "[-- extra claude args]",
-				Flags: append([]cli.Flag{
+				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "repo", Usage: "repo URL, path, or alias from conf.json (required)"},
 					&cli.StringFlag{Name: "branch", Usage: "branch to create or switch to (default: <branch_prefix><pr name>)"},
 					&cli.StringFlag{Name: "base", Usage: "branch to clone from (default: remote default)"},
-				}, phaseFlags("the repo's default pipeline")...),
+				},
 				Action: a.runCmd,
-			},
-			{
+			}, "the repo's default pipeline"),
+			withPhaseFlags(&cli.Command{
 				Name:      "apply",
 				Usage:     "run Claude phases in an existing local repo",
 				ArgsUsage: "[-- extra claude args]",
-				Flags: append([]cli.Flag{
+				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "repo", Usage: "repo name (an alias from conf.json works in its path); with --dir, says which repo's pipelines and roles to use (default: the folder name)"},
 					&cli.StringFlag{Name: "dir", Value: ".", Usage: "existing repo to work in"},
 					&cli.StringFlag{Name: "branch", Usage: "switch to this branch first, creating it if needed (default: stay on the current branch)"},
-				}, phaseFlags("none; just --prompt")...),
+				},
 				Action: a.applyCmd,
-			},
+			}, "none; just --prompt"),
 			a.statusCmd(),
 			a.uiCmd(),
 			a.costsCmd(),
@@ -100,9 +103,10 @@ func newApp(stderr io.Writer, rt job.Runtime) *cli.Command {
 	}
 }
 
-// phaseFlags are the flags shared by run and apply.
-func phaseFlags(defaultPipeline string) []cli.Flag {
-	return []cli.Flag{
+// withPhaseFlags adds the flags run and apply share to cmd, describing
+// --pipeline's default as defaultPipeline.
+func withPhaseFlags(cmd *cli.Command, defaultPipeline string) *cli.Command {
+	cmd.Flags = append(cmd.Flags,
 		&cli.StringFlag{Name: "pr", Usage: "PR spec file; a bare name is also looked up in pr_dir"},
 		&cli.StringFlag{Name: "prompt", Usage: "task for Claude; with no --role it is the whole prompt, otherwise it is given to each role"},
 		&cli.StringFlag{Name: "pipeline", Usage: "pipeline from ~/.prf/<repo>/" + pipeline.FileName + " to run (default: " + defaultPipeline + ")"},
@@ -123,11 +127,12 @@ func phaseFlags(defaultPipeline string) []cli.Flag {
 		agentFlag("(default: the repo alias's agent, else conf.json's, else claude)"),
 		&cli.StringFlag{Name: "claude", Value: "claude", Sources: cli.EnvVars("CLAUDE_BIN"), Usage: "claude binary"},
 		&cli.StringFlag{Name: "opencode", Value: "opencode", Sources: cli.EnvVars("OPENCODE_BIN"), Usage: "opencode binary"},
-	}
+	)
+	return cmd
 }
 
 // agentFlag is --agent, with its default described by def.
-func agentFlag(def string) cli.Flag {
+func agentFlag(def string) *cli.StringFlag {
 	return &cli.StringFlag{Name: "agent", Usage: "the coding agent each step runs: " + agent.Claude + " or " + agent.OpenCode + " " + def}
 }
 
@@ -224,25 +229,39 @@ func (a *app) options(c *cli.Command, name, recorded string) (job.Options, error
 }
 
 // newJob makes run's or apply's job, in repo name, from its flags: the
-// steps to run, and the PR spec, looked up in prDir too.
-func (a *app) newJob(c *cli.Command, name, prDir string, steps []pipeline.Step, pipelineName string) (*job.Job, job.Options, error) {
+// steps to run (see jobRoles for useDefault), and the PR spec, looked up in
+// prDir too. Its error is a usage error, ready to return.
+func (a *app) newJob(c *cli.Command, name, prDir string, useDefault bool) (*job.Job, job.Options, error) {
+	usage := func(err error) (*job.Job, job.Options, error) {
+		return nil, job.Options{}, cli.Exit("prf: "+err.Error(), job.ExitUsage)
+	}
+	if !itemname.Valid(name) {
+		return usage(fmt.Errorf("can't use %q as a repo name; add an alias for it in %s", name, config.FileName))
+	}
+	steps, pipelineName, err := jobRoles(c, a.home, name, useDefault)
+	if err != nil {
+		return usage(err)
+	}
 	o, err := a.options(c, name, "")
 	if err != nil {
-		return nil, o, err
+		return usage(err)
 	}
 	if o.Agent.Name() == agent.OpenCode {
 		if err := checkOpenCodeSteps(c, steps); err != nil {
-			return nil, o, err
+			return usage(err)
 		}
 	}
 	o.Steps, o.Pipeline, o.Task = steps, pipelineName, c.String("prompt")
 	if o.PR, err = resolvePR(c.String("pr"), prDir); err != nil {
-		return nil, o, err
+		return usage(err)
 	}
 	o.Workdir, o.Out, o.Status, o.In = flagOr(c, "workdir", a.cfg.Workdir), c.String("out"), c.String("status"), c.String("in")
 	o.AgentArgs = append(append([]string{}, a.agentArgs(o.Agent)...), c.Args().Slice()...)
 	j, err := job.New(o)
-	return j, o, err
+	if err != nil {
+		return usage(err)
+	}
+	return j, o, nil
 }
 
 // checkOpenCodeSteps refuses steps opencode can't run as given: a model
@@ -273,17 +292,9 @@ func (a *app) runCmd(ctx context.Context, c *cli.Command) error {
 		}
 		url, name = repo.URL, repoArg
 	}
-
-	if !itemname.Valid(name) {
-		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, config.FileName), job.ExitUsage)
-	}
-	steps, pipelineName, err := jobRoles(c, a.home, name, true)
+	j, o, err := a.newJob(c, name, firstNonEmpty(repo.PRDir, a.cfg.PRDir), true)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
-	}
-	j, o, err := a.newJob(c, name, firstNonEmpty(repo.PRDir, a.cfg.PRDir), steps, pipelineName)
-	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
+		return err
 	}
 
 	branch := c.String("branch")
@@ -293,7 +304,7 @@ func (a *app) runCmd(ctx context.Context, c *cli.Command) error {
 		}
 		branch = a.cfg.BranchPrefix + strings.TrimSuffix(filepath.Base(o.PR), ".md")
 	}
-	return j.Run(job.Clone{
+	return j.Run(ctx, job.Clone{
 		URL: url, Base: flagOr(c, "base", repo.Base), Branch: branch, Reference: repo.Path,
 		JobEnv: repo.JobEnv, JobSeed: repo.JobSeed, MaxDisk: a.cfg.MaxDisk,
 	})
@@ -316,20 +327,11 @@ func (a *app) applyCmd(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
 	}
-	name := firstNonEmpty(repoName, filepath.Base(dir))
-	if !itemname.Valid(name) {
-		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, config.FileName), job.ExitUsage)
-	}
-
-	steps, pipelineName, err := jobRoles(c, a.home, name, false)
+	j, _, err := a.newJob(c, firstNonEmpty(repoName, filepath.Base(dir)), firstNonEmpty(repo.PRDir, a.cfg.PRDir), false)
 	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
+		return err
 	}
-	j, _, err := a.newJob(c, name, firstNonEmpty(repo.PRDir, a.cfg.PRDir), steps, pipelineName)
-	if err != nil {
-		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
-	}
-	return j.Apply(dir, c.String("branch"))
+	return j.Apply(ctx, dir, c.String("branch"))
 }
 
 func firstPositive(vals ...float64) float64 {
@@ -370,4 +372,17 @@ func resolvePR(p, prDir string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("PR file not found: %s (also looked in pr_dir %q)", p, prDir)
+}
+
+func indexCmd(ctx context.Context, c *cli.Command) error {
+	dir, err := filepath.Abs(c.String("dir"))
+	if err != nil {
+		return cli.Exit("prf: "+err.Error(), job.ExitUsage)
+	}
+	start := time.Now()
+	if err := codeindex.Build(dir, filepath.Base(dir), firstNonEmpty(gitx.Output(dir, "branch", "--show-current"), "HEAD"), c.String("out")); err != nil {
+		return cli.Exit("prf: "+err.Error(), job.ExitSetup)
+	}
+	_, _ = fmt.Fprintf(c.Root().Writer, "wrote %s in %s\n", filepath.Join(c.String("out"), "index.md"), time.Since(start).Round(time.Millisecond))
+	return nil
 }
