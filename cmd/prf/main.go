@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/itemname"
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
@@ -57,7 +58,7 @@ func newApp() *cli.Command {
 		// main prints errors and exits; the default handler would call os.Exit itself.
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "home", Value: defaultHome(), Sources: cli.EnvVars("PRF_HOME"), Usage: "prf home: conf.json, shared roles/, and a folder per repo with its pipeline.json and roles/"},
+			&cli.StringFlag{Name: "home", Value: config.DefaultHome(), Sources: cli.EnvVars("PRF_HOME"), Usage: "prf home: conf.json, shared roles/, and a folder per repo with its pipeline.json and roles/"},
 		},
 		Before: loadConfig,
 		Commands: []*cli.Command{
@@ -115,7 +116,7 @@ func phaseFlags(defaultPipeline string) []cli.Flag {
 		&cli.StringFlag{Name: "pr-create", Usage: "after pushing, open a PR: draft, ready, or none (default: the repo alias's pr_create); implies --push"},
 		&cli.Float64Flag{Name: "max-cost", Usage: "stop the job once it has spent this many USD (default: pipeline.json's max_cost, else conf.json's, else no cap)"},
 		&cli.Float64Flag{Name: "max-step-cost", Usage: "budget in USD for every step, overriding each step's max_cost (default: the step's, else pipeline.json's max_step_cost, else conf.json's, else no cap)"},
-		&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "base directory for job folders: <workdir>/<repo>/<job>/ (default: conf.json's workdir, else this)"},
+		&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "base directory for job folders: <workdir>/<repo>/<job>/ (default: conf.json's workdir, else this)"},
 		&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "also print each step Claude takes (files read, commands run, edits, messages) as it happens"},
 		&cli.StringFlag{Name: "out", Usage: "write Claude's step-by-step log to this file instead of <job>/claude.log, and don't print its summaries to stdout"},
 		&cli.StringFlag{Name: "in", Usage: "extra context on Claude's stdin: a file (sent to every phase), or a fifo or '-' (first phase only)"},
@@ -191,7 +192,7 @@ type job struct {
 }
 
 // newJob fills in the settings shared by run and apply.
-func newJob(c *cli.Command, repo repoConfig, roles []pipeline.Step) job {
+func newJob(c *cli.Command, repo config.Repo, roles []pipeline.Step) job {
 	return job{
 		pr:         c.String("pr"),
 		prDir:      firstNonEmpty(repo.PRDir, cfg.PRDir),
@@ -285,7 +286,7 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 	}
 
 	if !itemname.Valid(name) {
-		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, confFile), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, config.FileName), exitUsage)
 	}
 	roles, pipelineName, err := jobRoles(c, name, true)
 	if err != nil {
@@ -335,7 +336,7 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 		j.setupStage("seeding the job folder")
 		seeds := slices.Clone(repo.JobSeed)
 		for i := range seeds {
-			seeds[i].From = expandHome(seeds[i].From)
+			seeds[i].From = config.ExpandHome(seeds[i].From)
 		}
 		jobenv.Copy(j.jobDir, seeds, logf)
 	}
@@ -357,7 +358,7 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 	dir := c.String("dir")
 	if repoName != "" && !c.IsSet("dir") {
 		if repo.Path == "" {
-			return cli.Exit(fmt.Sprintf("prf: repo %q has no path in %s; give --dir", repoName, confFile), exitUsage)
+			return cli.Exit(fmt.Sprintf("prf: repo %q has no path in %s; give --dir", repoName, config.FileName), exitUsage)
 		}
 		dir = repo.Path
 	}
@@ -367,7 +368,7 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 	}
 	name := firstNonEmpty(repoName, filepath.Base(dir))
 	if !itemname.Valid(name) {
-		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, confFile), exitUsage)
+		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, config.FileName), exitUsage)
 	}
 
 	roles, pipelineName, err := jobRoles(c, name, false)
@@ -429,12 +430,12 @@ func (j *job) applyRepoDefaults(c *cli.Command) error {
 	j.base, j.prTitleFile, j.prBodyFile = flagOr(c, "base", repo.Base), repo.PRTitleFile, repo.PRBodyFile
 	if c.IsSet("pr-create") {
 		switch v := c.String("pr-create"); v {
-		case prDraft, prReady:
+		case config.PRDraft, config.PRReady:
 			j.prCreate = v
 		case prNone:
 			j.prCreate = ""
 		default:
-			return fmt.Errorf("--pr-create must be %s, %s or %s", prDraft, prReady, prNone)
+			return fmt.Errorf("--pr-create must be %s, %s or %s", config.PRDraft, config.PRReady, prNone)
 		}
 	}
 	if j.prCreate != "" {

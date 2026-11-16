@@ -7,14 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/chrisrob11/prfoundry/internal/config"
 )
 
-// PR states for pr_create and --pr-create.
-const (
-	prDraft = "draft"
-	prReady = "ready"
-	prNone  = "none"
-)
+// prNone is --pr-create's third value, beside config.PRDraft and config.PRReady: open no PR.
+const prNone = "none"
 
 // ship pushes the branch and opens its PR, when asked to, once every step
 // has passed. It runs as prf, outside the sandbox, with your own git and
@@ -66,7 +64,7 @@ func (j *job) openPR() (string, error) {
 	if j.base != "" {
 		args = append(args, "--base", j.base)
 	}
-	if j.prCreate == prDraft {
+	if j.prCreate == config.PRDraft {
 		args = append(args, "--draft")
 	}
 	if j.prTitleFile == "" && j.prBodyFile == "" {

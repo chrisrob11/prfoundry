@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 )
@@ -389,7 +390,7 @@ func TestRealSRT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := homeDir()
+	home := config.ExpandHome("~")
 	out, code, err := j.runCommand(`echo "tmp=$TMPDIR task=$PRF_TMP"
 touch ok && echo checkout-writable
 touch "$TMPDIR/x" && echo tmp-writable

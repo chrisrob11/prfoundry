@@ -4,11 +4,11 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"text/tabwriter"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/urfave/cli/v3"
 )
@@ -22,7 +22,7 @@ func costsCmd() *cli.Command {
 			"Jobs that ran before prf recorded spend count in the total only.",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "repo", Usage: "only this repo's jobs"},
-			&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
+			&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
 			&cli.DurationFlag{Name: "since", Usage: "only jobs active in this long, e.g. 48h (default: every job)"},
 			&cli.BoolFlag{Name: "json", Usage: "print JSON"},
 		},

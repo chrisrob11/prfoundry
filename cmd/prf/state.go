@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
@@ -178,7 +179,7 @@ func statusCmd() *cli.Command {
 			"done, failed, and died (says it's running, but its process is gone).",
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "repo", Usage: "only this repo's jobs"},
-			&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
+			&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
 			&cli.BoolFlag{Name: "json", Usage: "print JSON"},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {

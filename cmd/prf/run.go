@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
@@ -585,7 +586,7 @@ func checkDisk(path string, limit int) error {
 		return fmt.Errorf("checking free space for %s: %w", path, err)
 	}
 	if used >= float64(limit) {
-		return fmt.Errorf("the disk holding %s is %.0f%% full, at or above max_disk_percent (%d%%) in %s; free some space or raise it", path, used, limit, confFile)
+		return fmt.Errorf("the disk holding %s is %.0f%% full, at or above max_disk_percent (%d%%) in %s; free some space or raise it", path, used, limit, config.FileName)
 	}
 	return nil
 }

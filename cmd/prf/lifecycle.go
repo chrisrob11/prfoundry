@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/mise"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
@@ -48,7 +49,7 @@ func resumeCmd() *cli.Command {
 			"repeated. Status lines are added to the job's status file, and steps keep their numbers.",
 		Flags: []cli.Flag{
 			&cli.IntFlag{Name: "from", Usage: "step to start from, counting from 1 (default: the step it stopped at)"},
-			&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
+			&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
 			&cli.BoolFlag{Name: "verbose", Aliases: []string{"v"}, Usage: "also print each step Claude takes"},
 			&cli.StringFlag{Name: "model", Usage: "model for every remaining step (default: the models the job used)"},
 			&cli.Float64Flag{Name: "max-cost", Usage: "cap for the whole job, counting what it already spent"},
@@ -168,7 +169,7 @@ func cleanCmd() *cli.Command {
 			&cli.BoolFlag{Name: "failed", Usage: "also remove failed and died jobs"},
 			&cli.BoolFlag{Name: "force", Usage: "remove picked jobs even with uncommitted or unpushed work"},
 			&cli.BoolFlag{Name: "yes", Usage: "actually remove them"},
-			&cli.StringFlag{Name: "workdir", Value: filepath.Join(homeDir(), "prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
+			&cli.StringFlag{Name: "workdir", Value: config.ExpandHome("~/prf-work"), Sources: cli.EnvVars("PRF_WORKDIR"), Usage: "where the job folders are (default: conf.json's workdir, else this)"},
 		},
 		Action: clean,
 	}

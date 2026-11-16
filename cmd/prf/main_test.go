@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/config"
 	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/sandbox"
@@ -109,7 +110,7 @@ func newEnv(t *testing.T, conf string) env {
 	if conf != "" {
 		conf = ",\n" + strings.ReplaceAll(conf, "{{origin}}", e.origin)
 	}
-	writeFileT(t, filepath.Join(e.home, confFile), `{"claude": "`+claude+`", "workdir": "`+filepath.Join(e.root, "work")+`"`+conf+"}\n")
+	writeFileT(t, filepath.Join(e.home, config.FileName), `{"claude": "`+claude+`", "workdir": "`+filepath.Join(e.root, "work")+`"`+conf+"}\n")
 	return e
 }
 
