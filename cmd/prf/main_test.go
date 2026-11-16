@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/sandbox"
 	"github.com/urfave/cli/v3"
 )
 
@@ -359,7 +361,7 @@ func TestApply(t *testing.T) {
 	if !sameDir(calls[0][0], repo) {
 		t.Errorf("ran in %s, want %s", calls[0][0], repo)
 	}
-	settings := filepath.Join(e.home, settingsFile)
+	settings := filepath.Join(e.home, sandbox.SettingsFile)
 	if !strings.HasPrefix(calls[0][1], "-p just this\n\n## Codebase context") || !strings.HasSuffix(calls[0][1], "--settings "+settings) {
 		t.Errorf("args = %q, want the prompt, then the codebase context, then --settings %s", calls[0][1], settings)
 	}
@@ -845,4 +847,79 @@ func TestCostCaps(t *testing.T) {
 			t.Errorf("status:\n%s", b)
 		}
 	})
+}
+
+// run writes <job>/mise.toml and seeds the job folder before the first step,
+// and lets every step write to the folders job_env and job_seed name.
+func TestRunJobEnv(t *testing.T) {
+	shared := t.TempDir()
+	writeFileT(t, filepath.Join(shared, "go-build", "00", "entry"), "warm")
+	e := newEnv(t, `"repos": {
+		"app": {"url": "{{origin}}", "job_env": {"GOCACHE": "{{job}}/cache/go-build", "GOLANGCI_LINT_CACHE": "{{job}}/cache/golangci"},
+			"job_seed": [{"from": "`+filepath.Join(shared, "go-build")+`", "to": "{{job}}/cache/go-build"}, {"from": "/no/such/dir", "to": "{{job}}/cache/gone"}]},
+		"plain": "{{origin}}"
+	}`)
+	errOut := captureStderr(t)
+
+	if code := e.run(t, "run", "--repo", "app", "--branch", "b", "--role", "review"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	job := filepath.Join(e.root, "work", "app", "b")
+	want := "[env]\nGOCACHE = \"" + job + "/cache/go-build\"\nGOLANGCI_LINT_CACHE = \"" + job + "/cache/golangci\"\n"
+	if got := readFile(t, filepath.Join(job, jobenv.File)); !strings.HasSuffix(got, want) {
+		t.Errorf("mise.toml =\n%s\nwant it to end with\n%s", got, want)
+	}
+	if got := readFile(t, filepath.Join(job, "cache", "go-build", "00", "entry")); got != "warm" {
+		t.Errorf("seeded cache entry = %q, want warm", got)
+	}
+	if !strings.Contains(errOut.String(), "warning: job_seed: not copying /no/such/dir") {
+		t.Errorf("no warning for the missing seed:\n%s", errOut)
+	}
+	args := e.calls(t)[0][1]
+	for _, d := range []string{"cache/gone", "cache/go-build", "cache/golangci"} {
+		dir := filepath.Join(job, d)
+		if !strings.Contains(args, "--add-dir "+dir+" ") {
+			t.Errorf("claude not given --add-dir %s: %s", dir, args)
+		}
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			t.Errorf("%s not made: %v", dir, err)
+		}
+	}
+
+	// Resuming keeps them writable.
+	removeFile(t, e.log)
+	if code := e.run(t, "resume", "app/b", "--from", "1"); code != 0 {
+		t.Fatalf("resume: exit %d", code)
+	}
+	if args := e.calls(t)[0][1]; !strings.Contains(args, "--add-dir "+filepath.Join(job, "cache", "golangci")+" ") {
+		t.Errorf("resume lost the job's write dirs: %s", args)
+	}
+
+	// Without job_env and job_seed, nothing changes.
+	removeFile(t, e.log)
+	if code := e.run(t, "run", "--repo", "plain", "--branch", "b", "--role", "review"); code != 0 {
+		t.Fatalf("plain: exit %d", code)
+	}
+	plain := filepath.Join(e.root, "work", "plain", "b")
+	if _, err := os.Stat(filepath.Join(plain, jobenv.File)); err == nil {
+		t.Error("wrote a mise.toml with no job_env")
+	}
+	if args := e.calls(t)[0][1]; strings.Count(args, "--add-dir ") != 2 { // tmp and context
+		t.Errorf("plain run got extra --add-dir: %s", args)
+	}
+
+	// apply in your own checkout writes no mise.toml and adds no write dirs,
+	// even for a repo with job_env.
+	checkout := filepath.Join(e.root, "checkout")
+	mustGit(t, "", "clone", "-q", e.origin, checkout)
+	removeFile(t, e.log)
+	if code := e.run(t, "apply", "--repo", "app", "--dir", checkout, "--prompt", "x"); code != 0 {
+		t.Fatalf("apply: exit %d", code)
+	}
+	if _, err := os.Stat(filepath.Join(e.root, jobenv.File)); err == nil {
+		t.Error("apply wrote a mise.toml beside your checkout")
+	}
+	if args := e.calls(t)[0][1]; strings.Contains(args, "cache") {
+		t.Errorf("apply in your checkout got the job's write dirs: %s", args)
+	}
 }

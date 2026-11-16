@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/gitx"
+	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
@@ -441,7 +442,8 @@ func (j *job) useJobWriteDirs() error {
 	if !strings.HasPrefix(j.dir, j.jobDir+string(filepath.Separator)) {
 		return nil
 	}
-	for _, d := range jobWriteDirs(j.jobDir, cfg.Repos[j.name]) {
+	repo := cfg.Repos[j.name]
+	for _, d := range jobenv.WriteDirs(j.jobDir, repo.JobEnv, repo.JobSeed) {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}

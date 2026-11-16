@@ -9,12 +9,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/itemname"
+	"github.com/chrisrob11/prfoundry/internal/jobenv"
+	"github.com/chrisrob11/prfoundry/internal/mise"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/sandbox"
 	"github.com/urfave/cli/v3"
 )
 
@@ -118,7 +122,7 @@ func phaseFlags(defaultPipeline string) []cli.Flag {
 		&cli.StringFlag{Name: "status", Usage: "append status lines to this file (default: <job>/status)"},
 		&cli.StringFlag{Name: "mode", Value: "acceptEdits", Usage: "Claude permission mode"},
 		&cli.BoolFlag{Name: "review-open", Value: true, Usage: "at a @review or @ask gate, open its page in your browser (--review-open=false only notifies; default: conf.json's review_open, else true)"},
-		&cli.BoolFlag{Name: "sandbox", Value: true, Usage: "run Claude in Claude Code's sandbox, with ~/.prf/[<repo>/]" + settingsFile + " (--sandbox=false turns it off)"},
+		&cli.BoolFlag{Name: "sandbox", Value: true, Usage: "run Claude in Claude Code's sandbox, with ~/.prf/[<repo>/]" + sandbox.SettingsFile + " (--sandbox=false turns it off)"},
 		&cli.StringFlag{Name: "claude", Value: "claude", Sources: cli.EnvVars("CLAUDE_BIN"), Usage: "claude binary"},
 	}
 }
@@ -253,16 +257,16 @@ func (j *job) setJobDir(c *cli.Command) error {
 
 // useSandbox picks the Claude settings file, unless the sandbox is off.
 func (j *job) useSandbox(c *cli.Command) error {
-	sandbox := cfg.Sandbox == nil || *cfg.Sandbox
+	on := cfg.Sandbox == nil || *cfg.Sandbox
 	if c.IsSet("sandbox") {
-		sandbox = c.Bool("sandbox")
+		on = c.Bool("sandbox")
 	}
 	j.settings = ""
-	if !sandbox {
+	if !on {
 		return nil
 	}
 	var err error
-	j.settings, err = settingsPath(j.name)
+	j.settings, err = sandbox.SettingsPath(home, j.name, logf)
 	return err
 }
 
@@ -309,7 +313,7 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 	}
 	j.dir = filepath.Join(j.jobDir, "repo")
 	// Clones under workdir are ours, so mise may trust their config files.
-	j.env = miseEnv(j.workdir)
+	j.env = mise.Env(j.workdir)
 
 	// An earlier job's folder is left alone: its status and state stay as they were.
 	if _, err := os.Stat(j.dir); err == nil {
@@ -323,16 +327,20 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 		logf("%v", err)
 		return j.finish("setup", exitSetup)
 	}
-	if err := writeJobEnv(j.jobDir, j.name, repo.JobEnv); err != nil {
+	if err := jobenv.Write(j.jobDir, j.name, repo.JobEnv); err != nil {
 		logf("writing the job's mise.toml: %v", err)
 		return j.finish("setup", exitSetup)
 	}
 	if len(repo.JobSeed) > 0 {
 		j.setupStage("seeding the job folder")
-		seedJob(j.jobDir, repo.JobSeed)
+		seeds := slices.Clone(repo.JobSeed)
+		for i := range seeds {
+			seeds[i].From = expandHome(seeds[i].From)
+		}
+		jobenv.Copy(j.jobDir, seeds, logf)
 	}
 	j.setupStage("installing tools")
-	installTools(j.dir, j.env)
+	mise.Install(j.dir, j.env, logf)
 	if err := j.prepareContext(); err != nil {
 		logf("%v", err)
 		return j.finish("setup", exitSetup)
@@ -396,9 +404,9 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 	if gitx.Output(j.dir, "status", "--porcelain") != "" {
 		logf("warning: %s has uncommitted changes; Claude's commits may include them", j.dir)
 	}
-	j.env = miseEnv(trustedDir(j.dir, j.workdir)) // your own checkout keeps mise's trust as you set it
+	j.env = mise.Env(mise.TrustedDir(j.dir, j.workdir)) // your own checkout keeps mise's trust as you set it
 	j.setupStage("installing tools")
-	installTools(j.dir, j.env)
+	mise.Install(j.dir, j.env, logf)
 	if err := j.prepareContext(); err != nil {
 		logf("%v", err)
 		return j.finish("setup", exitSetup)

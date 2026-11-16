@@ -1,4 +1,7 @@
-package main
+// Package jobenv gives a job folder its own environment from a repo's
+// job_env and job_seed settings: the job's mise.toml, the seed copies made
+// before the first step, and the folders under the job that steps may write.
+package jobenv
 
 import (
 	"bytes"
@@ -17,27 +20,27 @@ import (
 // jobPlaceholder in a job_env value or a job_seed target is the job folder.
 const jobPlaceholder = "{{job}}"
 
-// jobEnvFile is written in the job folder, the clone's parent, so mise finds
-// it from anywhere in the clone.
-const jobEnvFile = "mise.toml"
+// File is written in the job folder, the clone's parent, so mise finds it
+// from anywhere in the clone.
+const File = "mise.toml"
 
-// jobSeed is a copy made into a fresh job folder before the first step.
-type jobSeed struct {
+// Seed is a copy made into a fresh job folder before the first step.
+type Seed struct {
 	From string `json:"from"`
 	To   string `json:"to"`
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// checkJobEnv rejects job_env names mise can't set and job_seed targets
-// outside the job folder.
-func checkJobEnv(r repoConfig) error {
-	for name := range r.JobEnv {
+// Check rejects job_env names mise can't set and job_seed targets outside
+// the job folder.
+func Check(env map[string]string, seeds []Seed) error {
+	for name := range env {
 		if !envName.MatchString(name) {
 			return fmt.Errorf("job_env: %q is not an environment variable name", name)
 		}
 	}
-	for _, s := range r.JobSeed {
+	for _, s := range seeds {
 		if s.From == "" {
 			return fmt.Errorf("job_seed: %q has no from", s.To)
 		}
@@ -57,10 +60,10 @@ func underJob(path, jobDir string) bool {
 	return filepath.IsAbs(path) && strings.HasPrefix(filepath.Clean(path), jobDir+string(filepath.Separator))
 }
 
-// writeJobEnv writes <job>/mise.toml with an [env] table from job_env, so
-// steps, and anyone working in the clone, get the job's own tool caches.
-// With no job_env it writes nothing.
-func writeJobEnv(jobDir, repo string, env map[string]string) error {
+// Write writes <job>/mise.toml with an [env] table from job_env, so steps,
+// and anyone working in the clone, get the job's own tool caches. With no
+// job_env it writes nothing.
+func Write(jobDir, repo string, env map[string]string) error {
 	if len(env) == 0 {
 		return nil
 	}
@@ -74,7 +77,7 @@ func writeJobEnv(jobDir, repo string, env map[string]string) error {
 	for _, name := range names {
 		fmt.Fprintf(&b, "%s = %s\n", name, tomlString(expandJob(env[name], jobDir)))
 	}
-	return textfile.Write(filepath.Join(jobDir, jobEnvFile), b.String())
+	return textfile.Write(filepath.Join(jobDir, File), b.String())
 }
 
 // tomlString quotes s as a TOML basic string, whose escapes are JSON's.
@@ -86,31 +89,32 @@ func tomlString(s string) string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-// jobWriteDirs are the folders under the job folder that job_env and
-// job_seed point at, which steps may write to inside the sandbox.
-func jobWriteDirs(jobDir string, r repoConfig) []string {
+// WriteDirs are the folders under the job folder that job_env and job_seed
+// point at, which steps may write to inside the sandbox.
+func WriteDirs(jobDir string, env map[string]string, seeds []Seed) []string {
 	var dirs []string
 	add := func(s string) {
 		if p := filepath.Clean(expandJob(s, jobDir)); underJob(p, jobDir) && !slices.Contains(dirs, p) {
 			dirs = append(dirs, p)
 		}
 	}
-	for _, v := range r.JobEnv {
+	for _, v := range env {
 		add(v)
 	}
-	for _, s := range r.JobSeed {
+	for _, s := range seeds {
 		add(s.To)
 	}
 	slices.Sort(dirs)
 	return dirs
 }
 
-// seedJob makes each job_seed copy, as an APFS clone where cp -c can. A
-// missing source or a failed copy is only a warning: the job starts with
-// that folder empty instead.
-func seedJob(jobDir string, seeds []jobSeed) {
+// Copy makes each job_seed copy, as an APFS clone where cp -c can. Each
+// From must already have ~ expanded. A missing source or a failed copy is
+// only a warning, given to logf: the job starts with that folder empty
+// instead.
+func Copy(jobDir string, seeds []Seed, logf func(format string, args ...any)) {
 	for _, s := range seeds {
-		from, to := expandHome(s.From), filepath.Clean(expandJob(s.To, jobDir))
+		from, to := s.From, filepath.Clean(expandJob(s.To, jobDir))
 		if _, err := os.Stat(from); err != nil {
 			logf("warning: job_seed: not copying %s: %v", from, err)
 			continue

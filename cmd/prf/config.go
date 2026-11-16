@@ -10,9 +10,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/chrisrob11/prfoundry/internal/jobenv"
 	"github.com/chrisrob11/prfoundry/internal/jsonio"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/sandbox"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
 	"github.com/urfave/cli/v3"
 )
@@ -53,7 +55,7 @@ type repoConfig struct {
 	PRTitleFile string            `json:"pr_title_file,omitempty"` // in the checkout; without it, gh --fill
 	PRBodyFile  string            `json:"pr_body_file,omitempty"`
 	JobEnv      map[string]string `json:"job_env,omitempty"`  // written to <job>/mise.toml's [env]; {{job}} is the job folder
-	JobSeed     []jobSeed         `json:"job_seed,omitempty"` // copied into the job folder before the first step
+	JobSeed     []jobenv.Seed     `json:"job_seed,omitempty"` // copied into the job folder before the first step
 }
 
 // UnmarshalJSON accepts either a bare URL ("app": "git@...") or an object.
@@ -110,7 +112,7 @@ func readConfig(path string) (config, error) {
 		if r.PRCreate != "" && r.PRCreate != prDraft && r.PRCreate != prReady {
 			return config{}, fmt.Errorf("%s: repo %s: pr_create must be %q or %q", path, name, prDraft, prReady)
 		}
-		if err := checkJobEnv(r); err != nil {
+		if err := jobenv.Check(r.JobEnv, r.JobSeed); err != nil {
 			return config{}, fmt.Errorf("%s: repo %s: %w", path, name, err)
 		}
 		r.Path, r.PRDir = expandHome(r.Path), expandHome(r.PRDir)
@@ -180,7 +182,7 @@ func configuredRepos() []string {
 func initConfig(ctx context.Context, c *cli.Command) error {
 	files := [][2]string{
 		{filepath.Join(home, confFile), confTemplate},
-		{filepath.Join(home, settingsFile), string(defaultSettings())},
+		{filepath.Join(home, sandbox.SettingsFile), string(sandbox.DefaultSettings())},
 	}
 	entries, err := fs.ReadDir(roles.Builtin(), ".")
 	if err != nil {

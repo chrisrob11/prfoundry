@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chrisrob11/prfoundry/internal/jobenv"
+	"github.com/chrisrob11/prfoundry/internal/sandbox"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
 	"github.com/urfave/cli/v3"
 )
@@ -38,7 +40,7 @@ func TestReadConfig(t *testing.T) {
 			"app": {URL: "git@github.com:me/app.git"},
 			"api": {URL: "git@github.com:me/api.git", Path: "/home/me/code/api",
 				JobEnv:  map[string]string{"GOCACHE": "{{job}}/cache/go-build"},
-				JobSeed: []jobSeed{{From: "~/Library/Caches/go-build", To: "{{job}}/cache/go-build"}}},
+				JobSeed: []jobenv.Seed{{From: "~/Library/Caches/go-build", To: "{{job}}/cache/go-build"}}},
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -87,7 +89,7 @@ func TestConfigInit(t *testing.T) {
 	if code := runPrf(t, "--home", h, "config", "init"); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	for _, f := range []string{confFile, settingsFile, "roles/implement.md", "roles/test.md", "roles/review.md"} {
+	for _, f := range []string{confFile, sandbox.SettingsFile, "roles/implement.md", "roles/test.md", "roles/review.md"} {
 		if _, err := os.Stat(filepath.Join(h, f)); err != nil {
 			t.Errorf("%s not written: %v", f, err)
 		}

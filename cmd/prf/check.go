@@ -18,6 +18,7 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/excerpt"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/chrisrob11/prfoundry/internal/roles"
+	"github.com/chrisrob11/prfoundry/internal/sandbox"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
 )
 
@@ -294,10 +295,10 @@ func (j *job) checkSandbox(tmp string) (string, error) {
 		Sandbox *struct {
 			Enabled                      bool               `json:"enabled"`
 			EnableWeakerNetworkIsolation bool               `json:"enableWeakerNetworkIsolation"`
-			Network                      networkSettings    `json:"network"`
-			Filesystem                   filesystemSettings `json:"filesystem"`
+			Network                      sandbox.Network    `json:"network"`
+			Filesystem                   sandbox.Filesystem `json:"filesystem"`
 		} `json:"sandbox"`
-		Permissions permissionsSettings `json:"permissions"`
+		Permissions sandbox.Permissions `json:"permissions"`
 	}
 	if err := json.Unmarshal(b, &claude); err != nil {
 		return "", fmt.Errorf("reading %s: %w", j.settings, err)

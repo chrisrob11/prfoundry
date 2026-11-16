@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/chrisrob11/prfoundry/internal/gitx"
+	"github.com/chrisrob11/prfoundry/internal/mise"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
@@ -136,7 +137,7 @@ func resume(ctx context.Context, c *cli.Command) error {
 	if err := j.useSandbox(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
-	j.env = miseEnv(trustedDir(j.dir, workdir))
+	j.env = mise.Env(mise.TrustedDir(j.dir, workdir))
 	if err := j.listContext(); err != nil && !errors.Is(err, fs.ErrNotExist) { // a missing one just means no context
 		logf("warning: listing the context folder: %v", err)
 	}
