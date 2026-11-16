@@ -2,7 +2,7 @@
 
 ```sh
 make ci       # exactly what CI runs: fmt-check, lint, test, build
-make test     # go test -race ./...
+make test     # go test -race -count=1 ./... (never cached)
 make build    # bin/prf
 ```
 
