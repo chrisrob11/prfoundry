@@ -1,9 +1,10 @@
-package main
+package codeindex
 
 import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -37,10 +38,10 @@ func newGoRepo(t *testing.T) string {
 	return dir
 }
 
-func TestBuildIndex(t *testing.T) {
+func TestBuild(t *testing.T) {
 	dir := newGoRepo(t)
 	out := t.TempDir()
-	if err := buildIndex(dir, "demo", "feat/x", out); err != nil {
+	if err := Build(dir, "demo", "feat/x", out); err != nil {
 		t.Fatal(err)
 	}
 	read := func(name string) string {
@@ -135,7 +136,7 @@ func TestBuildIndex(t *testing.T) {
 }
 
 // A repo far bigger than any old cap is mapped in full.
-func TestBuildIndexDoesNotTruncate(t *testing.T) {
+func TestBuildDoesNotTruncate(t *testing.T) {
 	isolateGit(t)
 	dir := filepath.Join(t.TempDir(), "big")
 	writeFileT(t, filepath.Join(dir, "go.mod"), "module example.com/big\n\ngo 1.26\n")
@@ -153,7 +154,7 @@ func TestBuildIndexDoesNotTruncate(t *testing.T) {
 	mustGit(t, dir, "commit", "-q", "-m", "big")
 
 	out := t.TempDir()
-	if err := buildIndex(dir, "big", "main", out); err != nil {
+	if err := Build(dir, "big", "main", out); err != nil {
 		t.Fatal(err)
 	}
 	index, _ := os.ReadFile(filepath.Join(out, "index.md"))
@@ -169,11 +170,11 @@ func TestBuildIndexDoesNotTruncate(t *testing.T) {
 	}
 }
 
-func TestBuildIndexNoFiles(t *testing.T) {
+func TestBuildNoFiles(t *testing.T) {
 	isolateGit(t)
 	dir := t.TempDir()
 	mustGit(t, dir, "init", "-q")
-	if err := buildIndex(dir, "empty", "main", filepath.Join(t.TempDir(), "index.md")); err == nil {
+	if err := Build(dir, "empty", "main", filepath.Join(t.TempDir(), "index.md")); err == nil {
 		t.Error("want an error for a repo with no tracked files")
 	}
 }
@@ -227,7 +228,7 @@ func TestIndexHelpers(t *testing.T) {
 	}
 }
 
-func TestBuildIndexModules(t *testing.T) {
+func TestBuildModules(t *testing.T) {
 	dir := newGoRepo(t)
 	for name, body := range map[string]string{
 		"tools/go.mod":              "module example.com/demo/tools\n\ngo 1.26\n",
@@ -242,7 +243,7 @@ func TestBuildIndexModules(t *testing.T) {
 	mustGit(t, dir, "commit", "-q", "-m", "modules")
 
 	out := t.TempDir()
-	if err := buildIndex(dir, "demo", "main", out); err != nil {
+	if err := Build(dir, "demo", "main", out); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(filepath.Join(out, "index.md"))
@@ -265,5 +266,41 @@ func TestBuildIndexModules(t *testing.T) {
 	}
 	if t.Failed() {
 		t.Log(index)
+	}
+}
+
+// isolateGit keeps the user's git config out of a test's git commands.
+func isolateGit(t *testing.T) {
+	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for k, v := range map[string]string{
+		"GIT_CONFIG_COUNT": "2",
+		"GIT_CONFIG_KEY_0": "gc.auto", "GIT_CONFIG_VALUE_0": "0",
+		"GIT_CONFIG_KEY_1": "maintenance.auto", "GIT_CONFIG_VALUE_1": "false",
+	} {
+		t.Setenv(k, v)
+	}
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
+		t.Setenv(k, "prf test")
+	}
+	for _, k := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(k, "test@example.com")
+	}
+}
+
+func mustGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func writeFileT(t *testing.T, path, s string) {
+	t.Helper()
+	if err := writeFile(path, s); err != nil {
+		t.Fatal(err)
 	}
 }

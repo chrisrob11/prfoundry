@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
 )
 
@@ -81,13 +83,13 @@ func listRoles(repo string) []roleEntry {
 }
 
 func loadRoleEntry(name, scope, path string) *roleEntry {
-	_, builtinErr := fs.Stat(builtinRoles, "roles/"+name+".md")
+	_, builtinErr := fs.Stat(roles.Builtin(), name+".md")
 	e := &roleEntry{Name: name, Scope: scope, Path: path, Builtin: builtinErr == nil}
 	b, err := os.ReadFile(path)
 	if err == nil {
 		e.Content = string(b)
 		e.Description = firstLine(e.Content)
-		err = validateRole(name, e.Content)
+		err = roles.Validate(name, e.Content)
 	}
 	if err != nil {
 		e.Error = err.Error()
@@ -175,11 +177,11 @@ func roleSet(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return cli.Exit("prf: reading role: "+err.Error(), exitUsage)
 	}
-	if err := validateRole(name, string(text)); err != nil {
+	if err := roles.Validate(name, string(text)); err != nil {
 		return cli.Exit("prf: not saved: "+err.Error(), exitUsage)
 	}
 	path := filepath.Join(roleDirs(repo)[0], name+".md")
-	if err := writeAtomic(path, text); err != nil {
+	if err := atomicfile.Write(path, text); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "saved role %s %s\n", name, path)
@@ -210,12 +212,12 @@ func roleReset(ctx context.Context, c *cli.Command) error {
 	if err != nil {
 		return err
 	}
-	b, err := fs.ReadFile(builtinRoles, "roles/"+name+".md")
+	b, err := fs.ReadFile(roles.Builtin(), name+".md")
 	if err != nil {
 		return cli.Exit(fmt.Sprintf("prf: no built-in role %q", name), exitUsage)
 	}
 	path := filepath.Join(roleDirs("")[0], name+".md")
-	if err := writeAtomic(path, b); err != nil {
+	if err := atomicfile.Write(path, b); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitSetup)
 	}
 	_, _ = fmt.Fprintf(c.Root().Writer, "reset role %s %s\n", name, path)
@@ -248,28 +250,6 @@ func nameArg(c *cli.Command, kind string) (string, error) {
 		return "", cli.Exit(fmt.Sprintf("prf: invalid %s name %q: use letters, digits, '-', '_' and '.'", kind, name), exitUsage)
 	}
 	return name, nil
-}
-
-// writeAtomic replaces path with b, so a reader never sees a half-written file.
-func writeAtomic(path string, b []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(f.Name()) }() // no-op once renamed
-	if _, err := f.Write(b); err != nil {
-		return errors.Join(err, f.Close())
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(f.Name(), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), path)
 }
 
 func writeJSON(w io.Writer, v any) error {

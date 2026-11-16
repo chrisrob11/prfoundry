@@ -20,6 +20,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/atomicfile"
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // A review gate (@review in a pipeline) stops the job and serves a review
@@ -106,7 +110,7 @@ var (
 // max_rounds rounds of changes, or 130 if interrupted while waiting. A
 // resumed gate picks up the rounds in <job>/reviews, addressing a round
 // of changes the job stopped before finishing.
-func (j *job) reviewGate(p phase, step, model string, data promptData) int {
+func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 	dir := filepath.Join(j.jobDir, "reviews")
 	rounds, err := readRounds(dir)
 	if err != nil {
@@ -227,7 +231,7 @@ func (j *job) reviewView(rounds []reviewRound, round int) reviewView {
 	head := gitOutput(j.dir, "rev-parse", "HEAD")
 	base := firstNonEmpty(j.state.BaseCommit, head)
 	v := reviewView{
-		Kind: gateReview, Repo: j.name, Job: filepath.Base(j.jobDir), Branch: j.branch, Pipeline: j.pipeline,
+		Kind: pipeline.GateReview, Repo: j.name, Job: filepath.Base(j.jobDir), Branch: j.branch, Pipeline: j.pipeline,
 		Round: round, Base: base, Head: head, Task: j.task, Rounds: make([]reviewRound, len(rounds)),
 		Dirty: gitOutput(j.dir, "status", "--porcelain") != "",
 		Diff:  gitOutput(j.dir, "diff", "--no-color", "--no-ext-diff", "-M", base, head),
@@ -330,7 +334,7 @@ func writeRound(dir string, r reviewRound) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return writeAtomic(filepath.Join(dir, fmt.Sprintf("round-%d.json", r.Round)), append(b, '\n'))
+	return atomicfile.Write(filepath.Join(dir, fmt.Sprintf("round-%d.json", r.Round)), append(b, '\n'))
 }
 
 // reviewServer serves the review page on localhost for one gate, under a
@@ -391,7 +395,7 @@ func startReviewServer(dir, repo, job string, activity func() string) (*reviewSe
 	b, _ := json.Marshal(link)
 	err := os.MkdirAll(dir, 0o755)
 	if err == nil {
-		err = writeAtomic(path, append(b, '\n'))
+		err = atomicfile.Write(path, append(b, '\n'))
 	}
 	if err != nil {
 		logf("saving the review page's URL: %v", err)
@@ -488,7 +492,7 @@ func (s *reviewServer) serveSubmit(w http.ResponseWriter, r *http.Request) {
 // cleanSubmission checks a posted review, or answers to an ask gate's
 // question (kind), drops empty comments, and numbers the rest.
 func cleanSubmission(r *reviewRound, kind string) error {
-	if kind == gateAsk {
+	if kind == pipeline.GateAsk {
 		if r.Verdict != verdictAnswer && r.Verdict != verdictAccept && r.Verdict != verdictStop {
 			return fmt.Errorf("verdict must be %q, %q or %q", verdictAnswer, verdictAccept, verdictStop)
 		}

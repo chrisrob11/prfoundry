@@ -1,4 +1,7 @@
-package main
+// Package codeindex builds the codebase map prf gives every phase: an
+// overview of a Go checkout (index.md), one file per package with its types
+// and function signatures, and a symbol table (symbols.json).
+package codeindex
 
 import (
 	"bytes"
@@ -12,6 +15,7 @@ import (
 	"go/token"
 	"maps"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -43,12 +47,12 @@ type goType struct {
 	src       string // the declaration as Go source, without bodies or comments
 }
 
-// buildIndex writes a map of the Go module checked out at dir into
+// Build writes a map of the Go module checked out at dir into
 // contextDir: index.md, an overview with one line per package, and
 // packages/<dir>.md for each package, with every type definition and
 // function signature. Nothing is cut short. It reads only files git tracks,
 // so build output and ignored files are left out.
-func buildIndex(dir, name, branch, contextDir string) error {
+func Build(dir, name, branch, contextDir string) error {
 	// NUL-separated, so file names with spaces survive.
 	files := strings.Split(strings.TrimRight(gitOutput(dir, "ls-files", "-z"), "\x00"), "\x00")
 	if files[0] == "" {
@@ -597,4 +601,23 @@ func firstSentence(doc string) string {
 		s = s[:i+1]
 	}
 	return s
+}
+
+// gitOutput runs git in dir and returns its trimmed output, or "" if it fails.
+func gitOutput(dir string, args ...string) string {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	b, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// writeFile writes s to path, making its folder first.
+func writeFile(path, s string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(s), 0o644)
 }

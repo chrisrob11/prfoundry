@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // An ask gate (@ask in a pipeline, right after a role) lets that role stop
@@ -31,7 +34,7 @@ const acceptText = "The owner accepts the option marked Recommended for every qu
 // code if either fails, exitAsk when the step asks more than max_rounds
 // times, exitOwner if you stop the job, or 130 if interrupted while waiting.
 // A resumed gate picks up where its saved rounds left off.
-func (j *job) askGate(p phase, step, model string, data promptData) int {
+func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 	n, _, _ := strings.Cut(step, "/")
 	dir := filepath.Join(j.jobDir, "asks", "step-"+n)
 	rounds, err := readRounds(dir)
@@ -157,7 +160,7 @@ func (j *job) askGate(p phase, step, model string, data promptData) int {
 // askView is the review page for an ask gate: the branch, and question.
 func (j *job) askView(p phase, path, question string, rounds []reviewRound, round int) reviewView {
 	v := j.reviewView(rounds, round)
-	v.Kind, v.Question, v.QFile, v.Asker = gateAsk, question, j.displayPath(path), p.asker.name
+	v.Kind, v.Question, v.QFile, v.Asker = pipeline.GateAsk, question, j.displayPath(path), p.asker.name
 	return v
 }
 

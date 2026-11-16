@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // A step that runs again in the same job is told where its last run ended,
@@ -62,16 +64,16 @@ func TestRecordRun(t *testing.T) {
 
 	j.lastResult = phaseResult{text: "did it"}
 	j.recordRun(1)
-	if got := j.priorRun(1, promptData{}); got.PriorRun != head || got.PriorReport != j.reportPath(1) {
+	if got := j.priorRun(1, roles.Data{}); got.PriorRun != head || got.PriorReport != j.reportPath(1) {
 		t.Errorf("after a run with a report: %+v", got)
 	}
-	if got := j.priorRun(2, promptData{}); got.PriorRun != "" || got.PriorReport != "" {
+	if got := j.priorRun(2, roles.Data{}); got.PriorRun != "" || got.PriorReport != "" {
 		t.Errorf("a step that never ran: %+v", got)
 	}
 
 	j.lastResult = phaseResult{}
 	j.recordRun(1)
-	if got := j.priorRun(1, promptData{}); got.PriorRun != head || got.PriorReport != "" {
+	if got := j.priorRun(1, roles.Data{}); got.PriorRun != head || got.PriorReport != "" {
 		t.Errorf("a run with no report should drop the older one: %+v", got)
 	}
 

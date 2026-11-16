@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
 
@@ -46,7 +47,7 @@ func main() {
 func newApp() *cli.Command {
 	return &cli.Command{
 		Name:  "prf",
-		Usage: "nano AI prf: run Claude through role-based phases on a repo",
+		Usage: "run many PRs at once, each through a pipeline of Claude Code roles",
 		// main prints errors and exits; the default handler would call os.Exit itself.
 		ExitErrHandler: func(context.Context, *cli.Command, error) {},
 		Flags: []cli.Flag{
@@ -101,7 +102,7 @@ func phaseFlags(defaultPipeline string) []cli.Flag {
 	return []cli.Flag{
 		&cli.StringFlag{Name: "pr", Usage: "PR spec file; a bare name is also looked up in pr_dir"},
 		&cli.StringFlag{Name: "prompt", Usage: "task for Claude; with no --role it is the whole prompt, otherwise it is given to each role"},
-		&cli.StringFlag{Name: "pipeline", Usage: "pipeline from ~/.prf/<repo>/" + pipelineFile + " to run (default: " + defaultPipeline + ")"},
+		&cli.StringFlag{Name: "pipeline", Usage: "pipeline from ~/.prf/<repo>/" + pipeline.FileName + " to run (default: " + defaultPipeline + ")"},
 		&cli.StringSliceFlag{Name: "role", Usage: "roles to run in order instead of a pipeline, one phase each; role:model picks a step's model (e.g. implement:opus)"},
 		&cli.StringFlag{Name: "model", Usage: "model for every step, overriding the pipeline's (default: each step's model, else pipeline.json's model, else conf.json's, else Claude's own)"},
 		&cli.BoolFlag{Name: "push", Usage: "once every step passes, push the branch (never forced); --push=false skips it, and the PR, this once (default: the repo alias's push)"},
@@ -138,7 +139,7 @@ type job struct {
 	pr           string
 	prDir        string
 	task         string
-	roles        []step
+	roles        []pipeline.Step
 	pipeline     string  // name shown in progress and status lines
 	model        string  // --model: overrides every step's model
 	defaultModel string  // for steps that don't name a model
@@ -184,7 +185,7 @@ type job struct {
 }
 
 // newJob fills in the settings shared by run and apply.
-func newJob(c *cli.Command, repo repoConfig, roles []step) job {
+func newJob(c *cli.Command, repo repoConfig, roles []pipeline.Step) job {
 	return job{
 		pr:         c.String("pr"),
 		prDir:      firstNonEmpty(repo.PRDir, cfg.PRDir),
@@ -223,7 +224,7 @@ func (j *job) prepare() ([]phase, error) {
 	if err != nil {
 		return nil, err
 	}
-	return phases, checkCommands(j.roles, j.checkCmd)
+	return phases, pipeline.CheckCommands(j.roles, j.checkCmd)
 }
 
 // setJobDir places the job folder under workdir, named after the PR if there
@@ -280,12 +281,12 @@ func runCmd(ctx context.Context, c *cli.Command) error {
 	if !itemName.MatchString(name) {
 		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, confFile), exitUsage)
 	}
-	roles, pipeline, err := jobRoles(c, name, true)
+	roles, pipelineName, err := jobRoles(c, name, true)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	j := newJob(c, repo, roles)
-	j.name, j.pipeline = name, pipeline
+	j.name, j.pipeline = name, pipelineName
 	if err := j.applyRepoDefaults(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
@@ -359,12 +360,12 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 		return cli.Exit(fmt.Sprintf("prf: can't use %q as a repo name; add an alias for it in %s", name, confFile), exitUsage)
 	}
 
-	roles, pipeline, err := jobRoles(c, name, false)
+	roles, pipelineName, err := jobRoles(c, name, false)
 	if err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	j := newJob(c, repo, roles)
-	j.name, j.dir, j.pipeline = name, dir, pipeline
+	j.name, j.dir, j.pipeline = name, dir, pipelineName
 	if err := j.applyRepoDefaults(c); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
@@ -407,7 +408,7 @@ func applyCmd(ctx context.Context, c *cli.Command) error {
 // settings that come from the repo's pipeline.json and conf.json, under the
 // flags.
 func (j *job) applyRepoDefaults(c *cli.Command) error {
-	p, _, _ := readPipelines(j.name)
+	p, _, _ := pipeline.Read(home, j.name)
 	j.defaultModel = firstNonEmpty(p.Model, cfg.Model)
 	j.maxCost = firstPositive(c.Float64("max-cost"), p.MaxCost, cfg.MaxCost)
 	j.defaultStep = firstPositive(p.MaxStepCost, cfg.MaxStepCost)

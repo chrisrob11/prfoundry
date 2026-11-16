@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 	"github.com/urfave/cli/v3"
 )
 
@@ -97,12 +98,12 @@ func resume(ctx context.Context, c *cli.Command) error {
 	// An ask gate re-runs the step before it, so a resume there loads that
 	// step too, then drops it.
 	first := from - 1
-	if len(st.Steps) == len(st.Roles) && st.Steps[first].Gate == gateAsk && first > 0 {
+	if len(st.Steps) == len(st.Roles) && st.Steps[first].Gate == pipeline.GateAsk && first > 0 {
 		first--
 	}
-	steps := make([]step, 0, len(st.Roles)-first)
+	steps := make([]pipeline.Step, 0, len(st.Roles)-first)
 	for i := first; i < len(st.Roles); i++ {
-		s, _ := parseStep(st.Roles[i])
+		s, _ := pipeline.ParseStep(st.Roles[i])
 		if len(st.Steps) == len(st.Roles) {
 			s = st.Steps[i] // keeps a gate's settings
 		}
@@ -143,7 +144,7 @@ func resume(ctx context.Context, c *cli.Command) error {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 	phases, j.roles = phases[from-1-first:], steps[from-1-first:]
-	if err := checkCommands(j.roles, j.checkCmd); err != nil {
+	if err := pipeline.CheckCommands(j.roles, j.checkCmd); err != nil {
 		return cli.Exit("prf: "+err.Error(), exitUsage)
 	}
 

@@ -2,10 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // newHome returns a prf home with the built-in roles installed.
@@ -151,7 +154,7 @@ func TestRoleRemoveAndReset(t *testing.T) {
 	if code, _ := prf(t, h, "", "role", "reset", "review"); code != 0 {
 		t.Fatalf("reset: exit %d", code)
 	}
-	builtin, _ := builtinRoles.ReadFile("roles/review.md")
+	builtin, _ := fs.ReadFile(roles.Builtin(), "review.md")
 	if b, _ := os.ReadFile(filepath.Join(h, "roles", "review.md")); string(b) != string(builtin) {
 		t.Error("reset did not restore the built-in text")
 	}

@@ -14,6 +14,10 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/excerpt"
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // A check gate (@check in a pipeline) runs a command in the checkout, such
@@ -51,7 +55,7 @@ type checkRun struct {
 // the command still fails after max_rounds fixes, exitSetup if the command
 // can't start or be sandboxed, or 130 if interrupted. A resumed gate numbers
 // its rounds after the ones already saved.
-func (j *job) commandGate(p phase, step, model string, data promptData) int {
+func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
 	n, _, _ := strings.Cut(step, "/")
 	dir := filepath.Join(j.jobDir, "checks", "step-"+n)
 	command := firstNonEmpty(p.run, j.checkCmd)
@@ -215,7 +219,7 @@ func renderFailure(command string, code int, timedOut bool, timeout time.Duratio
 	default:
 		fmt.Fprintf(&b, "`%s` failed with exit code %d.\n", command, code)
 	}
-	ex, ok := excerpt(out)
+	ex, ok := excerpt.Failures(out, failureBytes)
 	if !ok || timedOut { // a timeout's clue is what it was doing last
 		writeOutput(&b, out)
 	} else {
@@ -236,7 +240,7 @@ func renderFailure(command string, code int, timedOut bool, timeout time.Duratio
 // leaving out go test's lines for passing packages and its bare FAIL and
 // PASS: "" if that's all they are.
 func unseenTail(out, ex string) string {
-	tail, _ := tailOf(strings.TrimRight(out, "\n"), 10, 2000)
+	tail, _ := excerpt.Tail(strings.TrimRight(out, "\n"), 10, 2000)
 	shown := map[string]bool{}
 	for _, l := range strings.Split(ex, "\n") {
 		shown[l] = true
@@ -302,7 +306,7 @@ func (j *job) checkSandbox(tmp string) (string, error) {
 	}
 	if _, err := exec.LookPath(srtBinary); err != nil {
 		return "", fmt.Errorf("the job is sandboxed, so @%s runs its command in the same sandbox, with srt, and srt isn't installed: "+
-			"npm install -g @anthropic-ai/sandbox-runtime (or run the job with --sandbox=false)", gateCheck)
+			"npm install -g @anthropic-ai/sandbox-runtime (or run the job with --sandbox=false)", pipeline.GateCheck)
 	}
 	var s srtSettings
 	fs := claude.Sandbox.Filesystem
@@ -347,27 +351,11 @@ func writeOutput(b *strings.Builder, out string) {
 		b.WriteString("\nIt printed nothing.\n")
 		return
 	}
-	tail, cut := tailOf(out, failureLines, failureBytes)
+	tail, cut := excerpt.Tail(out, failureLines, failureBytes)
 	if cut {
 		b.WriteString("\nThe end of its output:\n")
 	} else {
 		b.WriteString("\nIts output:\n")
 	}
 	fmt.Fprintf(b, "\n````\n%s\n````\n", tail)
-}
-
-// tailOf returns the end of s: its last lines, at most maxLines of them and
-// maxBytes long, and whether that left anything out.
-func tailOf(s string, maxLines, maxBytes int) (string, bool) {
-	cut := false
-	if len(s) > maxBytes {
-		s, cut = s[len(s)-maxBytes:], true
-		if i := strings.IndexByte(s, '\n'); i >= 0 {
-			s = s[i+1:] // from a whole line
-		}
-	}
-	if lines := strings.Split(s, "\n"); len(lines) > maxLines {
-		s, cut = strings.Join(lines[len(lines)-maxLines:], "\n"), true
-	}
-	return s, cut
 }

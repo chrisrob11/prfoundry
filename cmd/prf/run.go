@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
 )
 
@@ -85,7 +87,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 	defer signal.Stop(j.sigs)
 
 	j.pipeline = firstNonEmpty(j.pipeline, phases[0].name)
-	pipeline := j.pipeline
+	pipelineName := j.pipeline
 	total := j.totalSteps // a resumed job keeps the whole pipeline's numbering
 	if total == 0 {
 		total = len(phases)
@@ -99,7 +101,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 		base = j.baseCommit() // before any step commits, for the review gate's diff
 	}
 	j.setState(func(s *jobState) {
-		s.Pipeline, s.PR, s.Task, s.Push, s.PRCreate = pipeline, j.pr, j.task, j.push, j.prCreate
+		s.Pipeline, s.PR, s.Task, s.Push, s.PRCreate = pipelineName, j.pr, j.task, j.push, j.prCreate
 		if j.firstStep == 0 {
 			s.Roles, s.Models, s.Steps = names, models, j.roles
 		} else if len(s.Models) == total {
@@ -109,7 +111,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 			s.BaseCommit = base
 		}
 	})
-	data := promptData{PR: j.pr, Branch: j.branch, Task: j.task, Context: j.contextFiles}
+	data := roles.Data{PR: j.pr, Branch: j.branch, Task: j.task, Context: j.contextFiles}
 	start := time.Now()
 	j.cost = j.priorCost
 	for i, p := range phases {
@@ -117,11 +119,11 @@ func (j *job) runPhases(phases []phase) (err error) {
 		j.setState(func(s *jobState) { s.Step = j.firstStep + i + 1 })
 		var code int
 		switch p.gate {
-		case gateReview:
+		case pipeline.GateReview:
 			code = j.reviewGate(p, step, model, data)
-		case gateAsk:
+		case pipeline.GateAsk:
 			code = j.askGate(p, step, model, data)
-		case gateCheck:
+		case pipeline.GateCheck:
 			code = j.commandGate(p, step, model, data)
 		default:
 			n := j.firstStep + i + 1
@@ -138,7 +140,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 			if j.cost > 0 {
 				costNote = ", " + usd(j.cost)
 			}
-			logf("pipeline %s: %d/%d steps succeeded in %s%s", pipeline, done, total, shortDuration(time.Since(start)), costNote)
+			logf("pipeline %s: %d/%d steps succeeded in %s%s", pipelineName, done, total, shortDuration(time.Since(start)), costNote)
 			if code == 0 {
 				code = j.ship()
 			}
@@ -152,7 +154,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 // usage limit, pauses the job until the limit resets and runs it again, so
 // a limit never fails a job. It returns runClaudeOnce's code, or 130 if a
 // signal stops a pause.
-func (j *job) runClaude(p phase, name, step, model string, data promptData, first bool) int {
+func (j *job) runClaude(p phase, name, step, model string, data roles.Data, first bool) int {
 	for {
 		code := j.runClaudeOnce(p, name, step, model, data, first)
 		reset, hit := usageLimitReset(j.lastResult, time.Now())
@@ -170,7 +172,7 @@ func (j *job) runClaude(p phase, name, step, model string, data promptData, firs
 // step, and returns its exit code: Claude's own, 1 if it reported an
 // error, or one of prf's for a setup, usage or budget failure, or for a
 // role that broke its expectation. Its final message is in j.lastResult.
-func (j *job) runClaudeOnce(p phase, name, step, model string, data promptData, first bool) int {
+func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, first bool) int {
 	label := name // the phase as progress lines show it
 	if model != "" {
 		label += " (" + model + ")"
@@ -234,11 +236,11 @@ func (j *job) runClaudeOnce(p phase, name, step, model string, data promptData, 
 	if model != "" {
 		modelField = " model=" + model
 	}
-	pipeline := j.pipeline
-	j.event("PRF_START branch=%s phase=%s step=%s pipeline=%s%s", j.branch, name, step, pipeline, modelField)
+	pipelineName := j.pipeline
+	j.event("PRF_START branch=%s phase=%s step=%s pipeline=%s%s", j.branch, name, step, pipelineName, modelField)
 	j.setState(func(s *jobState) { s.State, s.Stage, s.Activity, s.ReviewURL = stateRunning, name, "", "" })
 	logf("[%s] %s: started", step, label)
-	_, _ = fmt.Fprintf(j.feed, "=== prf phase %s (step %s, pipeline %s%s) ===\n", name, step, pipeline, strings.ReplaceAll(modelField, "=", " "))
+	_, _ = fmt.Fprintf(j.feed, "=== prf phase %s (step %s, pipeline %s%s) ===\n", name, step, pipelineName, strings.ReplaceAll(modelField, "=", " "))
 	phaseStart, prog := time.Now(), &progress{}
 	expect, startHead := j.expectOf(p), ""
 	if expect != "" {
@@ -350,9 +352,9 @@ func (j *job) brokenExpectation(expect, start string) string {
 	var broke []string
 	head := gitOutput(j.dir, "rev-parse", "HEAD")
 	switch {
-	case expect == expectCommits && head == start:
+	case expect == pipeline.ExpectCommits && head == start:
 		broke = append(broke, "made no commits")
-	case expect == expectReadOnly && head != start:
+	case expect == pipeline.ExpectReadOnly && head != start:
 		broke = append(broke, fmt.Sprintf("made commits: HEAD moved from %s to %s", shortSHA(start), shortSHA(head)))
 	}
 	if status := gitOutput(j.dir, "status", "--porcelain"); status != "" {
@@ -377,7 +379,7 @@ func shortSHA(sha string) string {
 
 // priorRun adds to data what step n's last run in this job left: the commit
 // it ended at, and its report if it saved one.
-func (j *job) priorRun(n int, data promptData) promptData {
+func (j *job) priorRun(n int, data roles.Data) roles.Data {
 	data.PriorRun = j.state.StepHeads[n]
 	if _, err := os.Stat(j.reportPath(n)); err == nil && data.PriorRun != "" {
 		data.PriorReport = j.reportPath(n)

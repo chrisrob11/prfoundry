@@ -1,10 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // expectEnv is an env with roles that commit, do nothing, leave untracked
@@ -16,7 +17,7 @@ func expectEnv(t *testing.T, pipe string) (env, *syncBuffer) {
 	writeRole(t, e.roles, "plain", "plain on {{.Branch}}")
 	writeRole(t, e.roles, "dirty", "DIRTY on {{.Branch}}")
 	writeRole(t, e.roles, "both", "COMMIT DIRTY on {{.Branch}}")
-	writeFileT(t, filepath.Join(e.home, "origin", pipelineFile), "{"+pipe+"}")
+	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), "{"+pipe+"}")
 	return e, logs
 }
 
@@ -85,7 +86,7 @@ func TestExpectResume(t *testing.T) {
 // A role that stops to ask isn't held to its expectation; its re-run is.
 func TestExpectWithAsk(t *testing.T) {
 	e := askEnv(t, 1, `"@ask"`)
-	writeFileT(t, filepath.Join(e.home, "origin", pipelineFile), `{"default": "a", "pipelines": {"a": [{"role": "asker", "expect": "commits"}, {"gate": "ask", "question": ".agent/stop.md"}, "test"]}}`)
+	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "a", "pipelines": {"a": [{"role": "asker", "expect": "commits"}, {"gate": "ask", "question": ".agent/stop.md"}, "test"]}}`)
 	fakeOwner(t, answer)
 	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b"); code != exitExpect {
 		t.Fatalf("exit %d, want %d", code, exitExpect)
@@ -99,7 +100,7 @@ func TestExpectWithAsk(t *testing.T) {
 }
 
 func TestExpectOf(t *testing.T) {
-	j := job{expect: expectCommits}
+	j := job{expect: pipeline.ExpectCommits}
 	role, err := parseRole("r", "r")
 	if err != nil {
 		t.Fatal(err)
@@ -108,44 +109,13 @@ func TestExpectOf(t *testing.T) {
 		p    phase
 		want string
 	}{
-		{role, expectCommits},
-		{phase{name: "r", tmpl: role.tmpl, expect: expectClean}, expectClean},
-		{phase{name: "@check", tmpl: role.tmpl, gate: gateCheck}, ""},
+		{role, pipeline.ExpectCommits},
+		{phase{name: "r", tmpl: role.tmpl, expect: pipeline.ExpectClean}, pipeline.ExpectClean},
+		{phase{name: "@check", tmpl: role.tmpl, gate: pipeline.GateCheck}, ""},
 		{phase{name: "prompt"}, ""},
 	} {
 		if got := j.expectOf(tt.p); got != tt.want {
 			t.Errorf("expectOf(%s) = %q, want %q", tt.p.name, got, tt.want)
 		}
-	}
-}
-
-func TestExpectValidation(t *testing.T) {
-	for _, tt := range []struct {
-		s    step
-		want string
-	}{
-		{step{Role: "test", Expect: "tidy"}, `step test: expect must be "commits", "read-only" or "clean", not "tidy"`},
-		{step{Gate: gateCheck, Expect: expectCommits}, "step @check: expect is only for roles"},
-	} {
-		if err := checkGate(tt.s); err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("checkGate(%+v) = %v, want %q", tt.s, err, tt.want)
-		}
-	}
-	for _, v := range []string{expectCommits, expectReadOnly, expectClean} {
-		if err := checkGate(step{Role: "test", Expect: v}); err != nil {
-			t.Errorf("expect %s: %v", v, err)
-		}
-	}
-
-	if b, _ := json.Marshal(step{Role: "test", Expect: expectClean}); string(b) != `{"role":"test","expect":"clean"}` {
-		t.Errorf("a step with expect encodes as %s", b)
-	}
-
-	prev := home
-	home = t.TempDir()
-	t.Cleanup(func() { home = prev })
-	writeFileT(t, filepath.Join(home, "app", pipelineFile), `{"expect": "sometimes", "pipelines": {}}`)
-	if _, _, err := readPipelines("app"); err == nil || !strings.Contains(err.Error(), `expect must be "commits", "read-only" or "clean", not "sometimes"`) {
-		t.Errorf("readPipelines = %v", err)
 	}
 }

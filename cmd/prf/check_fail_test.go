@@ -13,6 +13,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // gateJob is a job for calling a check gate directly: a checkout, a job
@@ -48,7 +51,7 @@ func checkPhase(t *testing.T, command, prompt string) phase {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.name, p.gate, p.fixRole, p.run, p.maxRounds = "@check", gateCheck, "fix-check", command, 1
+	p.name, p.gate, p.fixRole, p.run, p.maxRounds = "@check", pipeline.GateCheck, "fix-check", command, 1
 	return p
 }
 
@@ -143,7 +146,7 @@ func TestCommandGateFailures(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 			j.sigs <- os.Interrupt
 		}()
-		if code := j.commandGate(checkPhase(t, "echo started; sleep 30", "fix"), "2/3", "", promptData{}); code != 130 {
+		if code := j.commandGate(checkPhase(t, "echo started; sleep 30", "fix"), "2/3", "", roles.Data{}); code != 130 {
 			t.Fatalf("exit %d, want 130", code)
 		}
 		if log := readFile(t, filepath.Join(j.jobDir, "checks", "step-2", "round-1.log")); log != "started\n" {
@@ -159,7 +162,7 @@ func TestCommandGateFailures(t *testing.T) {
 		if err := os.RemoveAll(j.dir); err != nil {
 			t.Fatal(err)
 		}
-		if code := j.commandGate(checkPhase(t, "true", "COMMIT"), "1/1", "", promptData{}); code != exitSetup {
+		if code := j.commandGate(checkPhase(t, "true", "COMMIT"), "1/1", "", roles.Data{}); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
 		}
 		if b, _ := os.ReadFile(os.Getenv("FAKE_LOG")); len(b) > 0 {
@@ -170,7 +173,7 @@ func TestCommandGateFailures(t *testing.T) {
 	t.Run("no TMPDIR for the command", func(t *testing.T) {
 		j := gateJob(t)
 		t.Setenv("TMPDIR", filepath.Join(j.jobDir, "missing"))
-		if code := j.commandGate(checkPhase(t, "true", "fix"), "1/1", "", promptData{}); code != exitSetup {
+		if code := j.commandGate(checkPhase(t, "true", "fix"), "1/1", "", roles.Data{}); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
 		}
 	})
@@ -179,7 +182,7 @@ func TestCommandGateFailures(t *testing.T) {
 		j := gateJob(t)
 		writeFileT(t, filepath.Join(j.jobDir, "checks"), "a file, not a folder")
 		j.tmp = filepath.Join(j.jobDir, "checks", "tmp") // unwritable too
-		if code := j.commandGate(checkPhase(t, "exit 1", "fix\n{{.Review}}"), "1/1", "", promptData{}); code != exitCheck {
+		if code := j.commandGate(checkPhase(t, "exit 1", "fix\n{{.Review}}"), "1/1", "", roles.Data{}); code != exitCheck {
 			t.Fatalf("exit %d, want %d", code, exitCheck)
 		}
 		fix := readFile(t, os.Getenv("FAKE_LOG"))
@@ -297,11 +300,11 @@ func TestCheckGateResume(t *testing.T) {
 
 	// A @check with no command of its own needs the repo's on resume too.
 	e2 := checkEnv(t, `"@check"`, `, "check": "exit 1"`)
-	writeRole(t, e2.roles, gateFixRoles[gateCheck], "fix {{.Review}}")
+	writeRole(t, e2.roles, pipeline.Step{Gate: pipeline.GateCheck}.Fixer(), "fix {{.Review}}")
 	if code := e2.run(t, "run", "--repo", e2.origin, "--branch", "c", "--prompt", "x"); code != exitCheck {
 		t.Fatalf("exit %d, want %d", code, exitCheck)
 	}
-	writeFileT(t, filepath.Join(e2.home, "origin", pipelineFile), `{"pipelines": {}}`)
+	writeFileT(t, filepath.Join(e2.home, "origin", pipeline.FileName), `{"pipelines": {}}`)
 	code, msg := runPrfErr(t, "--home", e2.home, "resume", "origin/c")
 	if code != exitUsage || !strings.Contains(msg, "@check has no command") {
 		t.Errorf("exit %d: %s", code, msg)
@@ -338,13 +341,13 @@ func TestCheckPipelineErrors(t *testing.T) {
 	home = e.home
 	t.Cleanup(func() { home = prev })
 	for _, tt := range []struct {
-		steps []step
+		steps []pipeline.Step
 		want  string
 	}{
-		{[]step{{Gate: gateCheck, Run: "make", FixRole: "nope"}}, `no role "nope"`},
-		{[]step{{Role: "implement", MaxCost: -1}}, "max_cost can't be negative"},
-		{[]step{{Role: "implement", Model: "bad model"}}, "invalid model"},
-		{[]step{{Gate: gateCheck, Run: "make", Timeout: "0s"}}, `timeout "0s" isn't a duration`},
+		{[]pipeline.Step{{Gate: pipeline.GateCheck, Run: "make", FixRole: "nope"}}, `no role "nope"`},
+		{[]pipeline.Step{{Role: "implement", MaxCost: -1}}, "max_cost can't be negative"},
+		{[]pipeline.Step{{Role: "implement", Model: "bad model"}}, "invalid model"},
+		{[]pipeline.Step{{Gate: pipeline.GateCheck, Run: "make", Timeout: "0s"}}, `timeout "0s" isn't a duration`},
 	} {
 		if err := checkPipeline("origin", tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
 			t.Errorf("checkPipeline(%+v) = %v, want %q", tt.steps, err, tt.want)

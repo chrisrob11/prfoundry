@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 // ownerSaw is what fakeOwner saw of a question: the page, its URL, and the
@@ -126,12 +128,12 @@ func askEnv(t *testing.T, count int, gate string) env {
 	e := newEnv(t, "")
 	captureStderr(t)
 	writeRole(t, e.roles, "asker", "ASK on {{.Branch}}")
-	writeRole(t, e.roles, gateFixRoles[gateAsk], "ANSWER on {{.Branch}}\n{{.Question}}\n{{.Review}}")
+	writeRole(t, e.roles, pipeline.Step{Gate: pipeline.GateAsk}.Fixer(), "ANSWER on {{.Branch}}\n{{.Question}}\n{{.Review}}")
 	asks := filepath.Join(e.root, "asks")
 	writeFileT(t, asks, strconv.Itoa(count))
 	t.Setenv("FAKE_ASKS", asks)
 	t.Setenv("FAKE_ASK_PATH", ".agent/stop.md")
-	writeFileT(t, filepath.Join(e.home, "origin", pipelineFile), `{"default": "a", "pipelines": {"a": ["asker", `+gate+`, "test"]}}`)
+	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "a", "pipelines": {"a": ["asker", `+gate+`, "test"]}}`)
 	return e
 }
 
@@ -145,7 +147,7 @@ func TestAskGate(t *testing.T) {
 	if len(*views) != 1 {
 		t.Fatalf("page opened %d times, want once", len(*views))
 	}
-	if v := (*views)[0]; v.Kind != gateAsk || v.Asker != "asker" || v.QFile != ".agent/stop.md" || !strings.Contains(v.Question, "See README.md:1.") || v.Round != 1 {
+	if v := (*views)[0]; v.Kind != pipeline.GateAsk || v.Asker != "asker" || v.QFile != ".agent/stop.md" || !strings.Contains(v.Question, "See README.md:1.") || v.Round != 1 {
 		t.Errorf("view = %+v", v)
 	}
 	st := (*views)[0].state
@@ -299,7 +301,7 @@ func TestAskSubmissions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer srv.close()
-	srv.set(pageWaiting, reviewView{Kind: gateAsk, Round: 1})
+	srv.set(pageWaiting, reviewView{Kind: pipeline.GateAsk, Round: 1})
 	post := func(body string) int {
 		res, err := http.Post(srv.url+"api/submit", "application/json", strings.NewReader(body))
 		if err != nil {
@@ -328,31 +330,31 @@ func TestAskSubmissions(t *testing.T) {
 
 func TestAskSteps(t *testing.T) {
 	for _, tt := range []struct {
-		steps []step
+		steps []pipeline.Step
 		want  string
 	}{
-		{[]step{{Gate: gateAsk}}, "must follow a role"},
-		{[]step{{Role: "implement"}, {Gate: gateReview}, {Gate: gateAsk}}, "must follow a role"},
+		{[]pipeline.Step{{Gate: pipeline.GateAsk}}, "must follow a role"},
+		{[]pipeline.Step{{Role: "implement"}, {Gate: pipeline.GateReview}, {Gate: pipeline.GateAsk}}, "must follow a role"},
 	} {
-		if err := checkAskers(tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("checkAskers(%+v) = %v", tt.steps, err)
+		if err := pipeline.CheckAskers(tt.steps); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("CheckAskers(%+v) = %v", tt.steps, err)
 		}
 	}
-	if err := checkAskers([]step{{Role: "implement"}, {Gate: gateAsk}}); err != nil {
+	if err := pipeline.CheckAskers([]pipeline.Step{{Role: "implement"}, {Gate: pipeline.GateAsk}}); err != nil {
 		t.Error(err)
 	}
-	if err := checkGate(step{Gate: gateReview, Question: "q.md"}); err == nil || !strings.Contains(err.Error(), "only for the @ask gate") {
+	if err := pipeline.CheckGate(pipeline.Step{Gate: pipeline.GateReview, Question: "q.md"}); err == nil || !strings.Contains(err.Error(), "only for the @ask gate") {
 		t.Errorf("question on @review: %v", err)
 	}
-	var s step
-	if err := json.Unmarshal([]byte(`{"gate": "ask", "question": "q.md"}`), &s); err != nil || s.fixRole() != gateFixRoles[gateAsk] {
+	var s pipeline.Step
+	if err := json.Unmarshal([]byte(`{"gate": "ask", "question": "q.md"}`), &s); err != nil || s.Fixer() != "answer-question" {
 		t.Errorf("step = %+v, %v", s, err)
 	}
 	if b, _ := json.Marshal(s); string(b) != `{"gate":"ask","question":"q.md"}` {
 		t.Errorf("marshal = %s", b)
 	}
 	j := &job{dir: "/repo", env: []string{"PRF_TMP=/jobs/a/tmp", "TMPDIR=/repo/.tmp"}}
-	if got := j.questionPath(defaultQuestion); got != "/jobs/a/tmp/stop.md" {
+	if got := j.questionPath(pipeline.DefaultQuestion); got != "/jobs/a/tmp/stop.md" {
 		t.Errorf("questionPath = %s", got)
 	}
 	if got := j.questionPath("$TMPDIR/stop.md"); got != "/repo/.tmp/stop.md" {
