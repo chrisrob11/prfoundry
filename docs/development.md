@@ -1,13 +1,15 @@
 # Development
 
 ```sh
-make ci       # exactly what CI runs: fmt-check, lint, test, build
+make ci       # exactly what CI runs: fmt-check, lint, cover-check, build
 make test     # go test -race -count=1 ./... (never cached)
+make cover    # the tests, writing coverage.out, and the total statement coverage
 make build    # bin/prf
 ```
 
 `make lint` and `make fmt` need `golangci-lint`. A PR needs a green `ci` check and the owner's
-approval to merge.
+approval to merge. `make cover-check` fails when total statement coverage falls below
+`COVER_FLOOR` in the Makefile; raise the floor when coverage rises, never lower it to pass.
 
 The tests run the whole CLI in-process against throwaway git repos and a fake `claude` script that
 speaks stream-json, so they need `git` but not Claude, and cost no tokens. They watch a job, or speed

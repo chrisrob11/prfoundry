@@ -98,7 +98,7 @@ prf run --repo app --pr login                          # feature is now app's de
 ## Development
 
 ```sh
-make ci      # exactly what CI runs: fmt-check, lint, test, build
+make ci      # exactly what CI runs: fmt-check, lint, test with a coverage floor, build
 ```
 
 Run it before pushing. A PR needs a green `ci` check and the owner's approval to merge. See
