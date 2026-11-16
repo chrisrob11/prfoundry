@@ -103,6 +103,7 @@ make ci      # exactly what CI runs: fmt-check, lint, test with a coverage floor
 
 Run it before pushing. A PR needs a green `ci` check and the owner's approval to merge. See
 [docs/development.md](docs/development.md) for how the tests work and where the code lives.
+See [CONTRIBUTING.md](CONTRIBUTING.md) to contribute and [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License
 
