@@ -12,6 +12,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/gitx"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/review"
 	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/chrisrob11/prfoundry/internal/state"
 	"github.com/chrisrob11/prfoundry/internal/textfile"
@@ -29,9 +30,6 @@ import (
 // answers are saved in <job>/asks/step-N/round-M.json, and the answers as the
 // fix role saw them in round-M.md.
 
-// acceptText is what "Accept recommendations" answers.
-const acceptText = "The owner accepts the option marked Recommended for every question."
-
 // askGate runs the ask gate p at step and returns its exit code: 0 once the
 // step before it finishes without a question, the fix role's or the step's
 // code if either fails, exitAsk when the step asks more than max_rounds
@@ -40,7 +38,7 @@ const acceptText = "The owner accepts the option marked Recommended for every qu
 func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 	n, _, _ := strings.Cut(step, "/")
 	dir := filepath.Join(j.jobDir, "asks", "step-"+n)
-	rounds, err := readRounds(dir)
+	rounds, err := review.ReadRounds(dir)
 	if err != nil {
 		logf("%v", err)
 		return exitSetup
@@ -49,16 +47,16 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 	askerModel := firstNonEmpty(j.model, p.asker.model, j.defaultModel)
 
 	j.event("PRF_START branch=%s phase=%s step=%s pipeline=%s", j.branch, p.name, step, j.pipeline)
-	var srv *reviewServer // started at the first question
+	var srv *review.Server // started at the first question
 	defer func() {
 		if srv != nil {
-			srv.close()
+			srv.Close()
 		}
 	}()
 	question := ""
 	page := func(state string) {
 		if srv != nil {
-			srv.set(state, j.askView(p, path, question, rounds, len(rounds)))
+			srv.Set(state, j.askView(p, path, question, rounds, len(rounds)))
 		}
 	}
 	asked := 0
@@ -67,32 +65,32 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 		return code
 	}
 	for {
-		if n := len(rounds); n > 0 && rounds[n-1].Verdict != verdictStop && !rounds[n-1].Rerun {
+		if n := len(rounds); n > 0 && rounds[n-1].Verdict != review.Stop && !rounds[n-1].Rerun {
 			last := &rounds[n-1]
 			if !last.Fixed { // record your answers
-				page(pageFixing)
+				page(review.PageFixing)
 				fix := data
-				fix.Question, fix.Review = last.Question, renderAnswers(*last, j.displayPath(path))
+				fix.Question, fix.Review = last.Question, review.RenderAnswers(*last, j.displayPath(path))
 				if err := textfile.Write(filepath.Join(dir, fmt.Sprintf("round-%d.md", last.Round)), fix.Review); err != nil {
 					logf("saving the answers: %v", err)
 				}
 				if code := j.runClaude(p, p.fixRole, step, model, fix, false); code != 0 {
-					page(pageStopped)
+					page(review.PageStopped)
 					return end(code, "")
 				}
 				last.Fixed, last.FixCommit, last.Summary = true, gitx.Output(j.dir, "rev-parse", "HEAD"), j.lastResult.Text
-				addReplies(last, j.lastResult.Text)
+				last.AddReplies(j.lastResult.Text)
 			} else { // re-run the step that asked
-				page(pageRerunning)
+				page(review.PageRerunning)
 				rerun := data
-				rerun.Answers = renderAnswered(rounds)
+				rerun.Answers = review.RenderAnswered(rounds)
 				if code := j.runClaude(*p.asker, p.asker.name, step, askerModel, rerun, false); code != 0 {
-					page(pageStopped)
+					page(review.PageStopped)
 					return end(code, "")
 				}
 				last.Rerun = true
 			}
-			if err := writeRound(dir, *last); err != nil {
+			if err := review.WriteRound(dir, *last); err != nil {
 				logf("saving the answers: %v", err)
 			}
 			continue
@@ -100,7 +98,7 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 
 		b, err := os.ReadFile(path)
 		if errors.Is(err, fs.ErrNotExist) || (err == nil && strings.TrimSpace(string(b)) == "") {
-			page(pageApproved)
+			page(review.PageApproved)
 			logf("[%s] %s: no question from %s", step, p.name, p.asker.name)
 			return end(0, "")
 		}
@@ -110,49 +108,48 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 		}
 		question = string(b)
 		if asked == p.maxRounds {
-			page(pageStopped)
+			page(review.PageStopped)
 			logf("[%s] %s: stopped: %s asked again after %d rounds; the question is in %s, and prf resume %s/%s carries on", step, p.name, p.asker.name, asked, path, j.name, filepath.Base(j.jobDir))
 			return end(exitAsk, " stopped=max_rounds")
 		}
 		asked++
 		if srv == nil {
-			if srv, err = startReviewServer(filepath.Join(j.jobDir, "reviews"), j.name, filepath.Base(j.jobDir), j.activity); err != nil {
+			if srv, err = j.startPage(j.fileAtHead); err != nil {
 				logf("starting the question page: %v", err)
 				return end(exitSetup, "")
 			}
-			srv.fileAt = j.fileAtHead
 		}
 
 		view := j.askView(p, path, question, rounds, len(rounds)+1)
-		srv.set(pageWaiting, view)
+		srv.Set(review.PageWaiting, view)
 		j.setState(func(s *state.Job) {
-			s.State, s.Stage, s.Activity, s.ReviewURL = state.Ask, p.name, fmt.Sprintf("question %d", view.Round), srv.url
+			s.State, s.Stage, s.Activity, s.ReviewURL = state.Ask, p.name, fmt.Sprintf("question %d", view.Round), srv.URL()
 		})
-		j.event("PRF_ASK branch=%s phase=%s step=%s round=%d url=%s", j.branch, p.name, step, view.Round, srv.url)
-		logf("[%s] %s: %s has a question: waiting for your answers at %s", step, p.name, p.asker.name, srv.url)
+		j.event("PRF_ASK branch=%s phase=%s step=%s round=%d url=%s", j.branch, p.name, step, view.Round, srv.URL())
+		logf("[%s] %s: %s has a question: waiting for your answers at %s", step, p.name, p.asker.name, srv.URL())
 		notify("prf: "+j.name+" has a question", fmt.Sprintf("%s, from %s", j.branch, p.asker.name))
-		if j.reviewOpen && !srv.watched() {
-			if err := openBrowser(srv.url); err != nil {
+		if j.reviewOpen && !srv.Watched() {
+			if err := openBrowser(srv.URL()); err != nil {
 				logf("opening the question page: %v", err)
 			}
 		}
 
-		var r reviewRound
+		var r review.Round
 		select {
-		case r = <-srv.submitted:
+		case r = <-srv.Submitted():
 		case <-j.sigs:
 			logf("[%s] %s: interrupted while waiting for your answers", step, p.name)
 			return end(130, "")
 		}
 		r.Round, r.Commit, r.Submitted, r.Question = view.Round, view.Head, time.Now(), question
 		rounds = append(rounds, r)
-		if err := writeRound(dir, r); err != nil {
+		if err := review.WriteRound(dir, r); err != nil {
 			logf("saving the answers: %v", err)
 		}
 		j.setState(func(s *state.Job) { s.State, s.Activity, s.ReviewURL = state.Running, "", "" })
 		j.event("PRF_ANSWERED branch=%s phase=%s step=%s round=%d verdict=%s comments=%d", j.branch, p.name, step, r.Round, r.Verdict, len(r.Comments))
-		if r.Verdict == verdictStop {
-			page(pageStopped)
+		if r.Verdict == review.Stop {
+			page(review.PageStopped)
 			logf("[%s] %s: you stopped the job at question %d", step, p.name, r.Round)
 			return end(exitOwner, " stopped=owner")
 		}
@@ -161,36 +158,10 @@ func (j *job) askGate(p phase, step, model string, data roles.Data) int {
 }
 
 // askView is the review page for an ask gate: the branch, and question.
-func (j *job) askView(p phase, path, question string, rounds []reviewRound, round int) reviewView {
+func (j *job) askView(p phase, path, question string, rounds []review.Round, round int) review.View {
 	v := j.reviewView(rounds, round)
 	v.Kind, v.Question, v.QFile, v.Asker = pipeline.GateAsk, question, j.displayPath(path), p.asker.name
 	return v
-}
-
-// renderAnswers is a round as the ask gate's fix role reads it, in {{.Review}}.
-func renderAnswers(r reviewRound, path string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Round %d: the owner answered the question in `%s`.\n", r.Round, path)
-	if r.Verdict == verdictAccept {
-		fmt.Fprintf(&b, "\n%s\n", acceptText)
-	}
-	if r.Body != "" {
-		fmt.Fprintf(&b, "\n%s\n", r.Body)
-	}
-	renderComments(&b, r.Comments)
-	return b.String()
-}
-
-// renderAnswered is every answered question, for the step that asked them.
-func renderAnswered(rounds []reviewRound) string {
-	var b strings.Builder
-	for _, r := range rounds {
-		if !r.Fixed {
-			continue
-		}
-		fmt.Fprintf(&b, "### Question %d\n\n%s\n\n### The owner's answer\n\n%s\n", r.Round, strings.TrimSpace(r.Question), renderAnswers(r, "the question file"))
-	}
-	return b.String()
 }
 
 // questionPath is where the gate looks for a question: q with environment

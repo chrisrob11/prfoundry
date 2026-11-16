@@ -1,16 +1,13 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"net/http"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/review"
 	"github.com/chrisrob11/prfoundry/internal/state"
 )
 
@@ -96,14 +93,14 @@ func TestReviewGate(t *testing.T) {
 		}
 	}
 
-	rounds, err := readRounds(filepath.Join(jobDir, "reviews"))
+	rounds, err := review.ReadRounds(filepath.Join(jobDir, "reviews"))
 	if err != nil || len(rounds) != 2 {
 		t.Fatalf("rounds = %+v, %v", rounds, err)
 	}
-	if r := rounds[0]; r.Verdict != verdictChanges || !r.Fixed || r.Summary != "did the thing" || len(r.Comments) != 1 || r.Comments[0].ID != 1 || r.Commit == "" {
+	if r := rounds[0]; r.Verdict != review.Changes || !r.Fixed || r.Summary != "did the thing" || len(r.Comments) != 1 || r.Comments[0].ID != 1 || r.Commit == "" {
 		t.Errorf("round 1 = %+v", r)
 	}
-	if r := rounds[1]; r.Round != 2 || r.Verdict != verdictApprove || r.Fixed {
+	if r := rounds[1]; r.Round != 2 || r.Verdict != review.Approve || r.Fixed {
 		t.Errorf("round 2 = %+v", r)
 	}
 	if md := readFile(t, filepath.Join(jobDir, "reviews", "round-1.md")); !strings.Contains(md, "Say more here.") {
@@ -144,132 +141,7 @@ func TestReviewGateRunsOutOfRounds(t *testing.T) {
 	if n := len(e.calls(t)); n != 3 {
 		t.Errorf("resume made %d claude calls in all, want one more fix run", n)
 	}
-	if rounds, _ := readRounds(filepath.Join(jobDir, "reviews")); len(rounds) != 3 || !rounds[1].Fixed || rounds[2].Verdict != verdictApprove {
+	if rounds, _ := review.ReadRounds(filepath.Join(jobDir, "reviews")); len(rounds) != 3 || !rounds[1].Fixed || rounds[2].Verdict != review.Approve {
 		t.Errorf("rounds after resume = %+v", rounds)
-	}
-}
-
-func TestReviewServer(t *testing.T) {
-	dir := t.TempDir()
-	srv, err := startReviewServer(dir, "app", "my job", func() string { return "Edit main.go" })
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer srv.close()
-	if !strings.Contains(srv.url, "/app/my-job/") {
-		t.Errorf("url %s doesn't name the job", srv.url)
-	}
-	post := func(body string) int {
-		res, err := http.Post(srv.url+"api/submit", "application/json", strings.NewReader(body))
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = res.Body.Close()
-		return res.StatusCode
-	}
-
-	if code := post(approve); code != http.StatusConflict {
-		t.Errorf("review before the round is ready: %d", code)
-	}
-	srv.set(pageWaiting, reviewView{Round: 1})
-	for _, bad := range []string{`{"verdict": "lgtm"}`, `{"verdict": "changes", "body": " "}`, `not json`} {
-		if code := post(bad); code != http.StatusBadRequest {
-			t.Errorf("post %s: %d, want 400", bad, code)
-		}
-	}
-	if code := post(requestChanges); code != http.StatusOK {
-		t.Fatalf("post: %d", code)
-	}
-	if code := post(approve); code != http.StatusConflict {
-		t.Errorf("second review of a round: %d, want 409", code)
-	}
-	select {
-	case r := <-srv.submitted:
-		if r.Verdict != verdictChanges || len(r.Comments) != 1 || r.Comments[0].ID != 1 {
-			t.Errorf("submitted %+v", r)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("nothing submitted")
-	}
-
-	srv.set(pageFixing, reviewView{Round: 1})
-	res, err := http.Get(srv.url + "api/state")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	err = json.NewDecoder(res.Body).Decode(&state)
-	_ = res.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state["state"] != pageFixing || state["activity"] != "Edit main.go" || !srv.watched() {
-		t.Errorf("state = %v, watched = %t", state, srv.watched())
-	}
-
-	for _, path := range []string{"/", "/api/state", strings.TrimSuffix(srv.url, "/") + "x/"} {
-		url := path
-		if strings.HasPrefix(path, "/") {
-			url = "http://" + strings.Split(srv.url, "/")[2] + path
-		}
-		if res, err := http.Get(url); err == nil {
-			_ = res.Body.Close()
-			if res.StatusCode != http.StatusNotFound {
-				t.Errorf("GET %s without the token: %d", url, res.StatusCode)
-			}
-		}
-	}
-	res, err = http.Get(srv.url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var page bytes.Buffer
-	_, err = page.ReadFrom(res.Body)
-	_ = res.Body.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(page.String(), "prf review") {
-		t.Error("page not served")
-	}
-}
-
-func TestReviewLinkIsStable(t *testing.T) {
-	dir := t.TempDir()
-	first, err := startReviewServer(dir, "app", "login", func() string { return "" })
-	if err != nil {
-		t.Fatal(err)
-	}
-	first.close()
-	again, err := startReviewServer(dir, "app", "login", func() string { return "" })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if again.url != first.url {
-		t.Errorf("restarted at %s, want %s", again.url, first.url)
-	}
-
-	// While that port is taken, a new one keeps the token.
-	other, err := startReviewServer(dir, "app", "login", func() string { return "" })
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer other.close()
-	again.close()
-	token := func(url string) string {
-		parts := strings.Split(strings.TrimSuffix(url, "/"), "/")
-		return parts[len(parts)-1]
-	}
-	if other.url == again.url || token(other.url) != token(again.url) {
-		t.Errorf("with the port taken: %s (was %s)", other.url, again.url)
-	}
-}
-
-func TestAddReplies(t *testing.T) {
-	r := reviewRound{Comments: []reviewComment{{ID: 1}, {ID: 2}, {ID: 3}}}
-	addReplies(&r, "Done.\n#1: Renamed it.\n- #3: Kept it: callers need it.\n#9: no such comment\nnot #2: a reply")
-	got := []string{r.Comments[0].Reply, r.Comments[1].Reply, r.Comments[2].Reply}
-	if want := []string{"Renamed it.", "", "Kept it: callers need it."}; !slices.Equal(got, want) {
-		t.Errorf("replies = %q, want %q", got, want)
 	}
 }
