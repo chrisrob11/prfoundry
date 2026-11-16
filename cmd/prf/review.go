@@ -23,6 +23,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/atomicfile"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // A review gate (@review in a pipeline) stops the job and serves a review
@@ -109,7 +110,7 @@ var (
 // max_rounds rounds of changes, or 130 if interrupted while waiting. A
 // resumed gate picks up the rounds in <job>/reviews, addressing a round
 // of changes the job stopped before finishing.
-func (j *job) reviewGate(p phase, step, model string, data promptData) int {
+func (j *job) reviewGate(p phase, step, model string, data roles.Data) int {
 	dir := filepath.Join(j.jobDir, "reviews")
 	rounds, err := readRounds(dir)
 	if err != nil {

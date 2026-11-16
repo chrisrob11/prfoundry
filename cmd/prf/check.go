@@ -17,6 +17,7 @@ import (
 
 	"github.com/chrisrob11/prfoundry/internal/excerpt"
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // A check gate (@check in a pipeline) runs a command in the checkout, such
@@ -54,7 +55,7 @@ type checkRun struct {
 // the command still fails after max_rounds fixes, exitSetup if the command
 // can't start or be sandboxed, or 130 if interrupted. A resumed gate numbers
 // its rounds after the ones already saved.
-func (j *job) commandGate(p phase, step, model string, data promptData) int {
+func (j *job) commandGate(p phase, step, model string, data roles.Data) int {
 	n, _, _ := strings.Cut(step, "/")
 	dir := filepath.Join(j.jobDir, "checks", "step-"+n)
 	command := firstNonEmpty(p.run, j.checkCmd)

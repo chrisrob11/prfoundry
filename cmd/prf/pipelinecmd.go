@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
 )
 
@@ -41,9 +42,9 @@ func checkPipeline(repo string, steps []pipeline.Step) error {
 		if s.Gate != "" {
 			role = s.Fixer() // the gate needs its fix role
 		}
-		text, err := findRole(roleDirs(repo), role)
+		text, err := roles.Find(roleDirs(repo), role)
 		if err == nil {
-			err = validateRole(role, text)
+			err = roles.Validate(role, text)
 		}
 		if err != nil {
 			return err

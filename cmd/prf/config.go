@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
 )
 
@@ -187,12 +188,12 @@ func initConfig(ctx context.Context, c *cli.Command) error {
 		{filepath.Join(home, confFile), confTemplate},
 		{filepath.Join(home, settingsFile), string(defaultSettings())},
 	}
-	entries, err := fs.ReadDir(builtinRoles, "roles")
+	entries, err := fs.ReadDir(roles.Builtin(), ".")
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		b, err := fs.ReadFile(builtinRoles, "roles/"+e.Name())
+		b, err := fs.ReadFile(roles.Builtin(), e.Name())
 		if err != nil {
 			return err
 		}

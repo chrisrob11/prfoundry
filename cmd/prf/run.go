@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 	"github.com/urfave/cli/v3"
 )
 
@@ -110,7 +111,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 			s.BaseCommit = base
 		}
 	})
-	data := promptData{PR: j.pr, Branch: j.branch, Task: j.task, Context: j.contextFiles}
+	data := roles.Data{PR: j.pr, Branch: j.branch, Task: j.task, Context: j.contextFiles}
 	start := time.Now()
 	j.cost = j.priorCost
 	for i, p := range phases {
@@ -153,7 +154,7 @@ func (j *job) runPhases(phases []phase) (err error) {
 // usage limit, pauses the job until the limit resets and runs it again, so
 // a limit never fails a job. It returns runClaudeOnce's code, or 130 if a
 // signal stops a pause.
-func (j *job) runClaude(p phase, name, step, model string, data promptData, first bool) int {
+func (j *job) runClaude(p phase, name, step, model string, data roles.Data, first bool) int {
 	for {
 		code := j.runClaudeOnce(p, name, step, model, data, first)
 		reset, hit := usageLimitReset(j.lastResult, time.Now())
@@ -171,7 +172,7 @@ func (j *job) runClaude(p phase, name, step, model string, data promptData, firs
 // step, and returns its exit code: Claude's own, 1 if it reported an
 // error, or one of prf's for a setup, usage or budget failure, or for a
 // role that broke its expectation. Its final message is in j.lastResult.
-func (j *job) runClaudeOnce(p phase, name, step, model string, data promptData, first bool) int {
+func (j *job) runClaudeOnce(p phase, name, step, model string, data roles.Data, first bool) int {
 	label := name // the phase as progress lines show it
 	if model != "" {
 		label += " (" + model + ")"
@@ -378,7 +379,7 @@ func shortSHA(sha string) string {
 
 // priorRun adds to data what step n's last run in this job left: the commit
 // it ended at, and its report if it saved one.
-func (j *job) priorRun(n int, data promptData) promptData {
+func (j *job) priorRun(n int, data roles.Data) roles.Data {
 	data.PriorRun = j.state.StepHeads[n]
 	if _, err := os.Stat(j.reportPath(n)); err == nil && data.PriorRun != "" {
 		data.PriorReport = j.reportPath(n)

@@ -11,8 +11,8 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
-// roles makes steps with no model.
-func roles(names ...string) []pipeline.Step {
+// roleSteps makes steps with no model.
+func roleSteps(names ...string) []pipeline.Step {
 	steps := make([]pipeline.Step, len(names))
 	for i, n := range names {
 		steps[i] = pipeline.Step{Role: n}
@@ -55,8 +55,8 @@ func TestPipelineCommand(t *testing.T) {
 		t.Fatalf("set bugfix: exit %d", code)
 	}
 	want := pipeline.File{Default: "feature", Pipelines: map[string][]pipeline.Step{
-		"feature": roles("implement", "perf", "test", "review"),
-		"bugfix":  roles("implement", "test"),
+		"feature": roleSteps("implement", "perf", "test", "review"),
+		"bugfix":  roleSteps("implement", "test"),
 	}}
 	if got := saved(); !reflect.DeepEqual(got, want) {
 		t.Errorf("pipeline.json = %+v, want %+v (first set becomes the default, built-in not persisted)", got, want)

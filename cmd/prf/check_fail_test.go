@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
+	"github.com/chrisrob11/prfoundry/internal/roles"
 )
 
 // gateJob is a job for calling a check gate directly: a checkout, a job
@@ -145,7 +146,7 @@ func TestCommandGateFailures(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 			j.sigs <- os.Interrupt
 		}()
-		if code := j.commandGate(checkPhase(t, "echo started; sleep 30", "fix"), "2/3", "", promptData{}); code != 130 {
+		if code := j.commandGate(checkPhase(t, "echo started; sleep 30", "fix"), "2/3", "", roles.Data{}); code != 130 {
 			t.Fatalf("exit %d, want 130", code)
 		}
 		if log := readFile(t, filepath.Join(j.jobDir, "checks", "step-2", "round-1.log")); log != "started\n" {
@@ -161,7 +162,7 @@ func TestCommandGateFailures(t *testing.T) {
 		if err := os.RemoveAll(j.dir); err != nil {
 			t.Fatal(err)
 		}
-		if code := j.commandGate(checkPhase(t, "true", "COMMIT"), "1/1", "", promptData{}); code != exitSetup {
+		if code := j.commandGate(checkPhase(t, "true", "COMMIT"), "1/1", "", roles.Data{}); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
 		}
 		if b, _ := os.ReadFile(os.Getenv("FAKE_LOG")); len(b) > 0 {
@@ -172,7 +173,7 @@ func TestCommandGateFailures(t *testing.T) {
 	t.Run("no TMPDIR for the command", func(t *testing.T) {
 		j := gateJob(t)
 		t.Setenv("TMPDIR", filepath.Join(j.jobDir, "missing"))
-		if code := j.commandGate(checkPhase(t, "true", "fix"), "1/1", "", promptData{}); code != exitSetup {
+		if code := j.commandGate(checkPhase(t, "true", "fix"), "1/1", "", roles.Data{}); code != exitSetup {
 			t.Fatalf("exit %d, want %d", code, exitSetup)
 		}
 	})
@@ -181,7 +182,7 @@ func TestCommandGateFailures(t *testing.T) {
 		j := gateJob(t)
 		writeFileT(t, filepath.Join(j.jobDir, "checks"), "a file, not a folder")
 		j.tmp = filepath.Join(j.jobDir, "checks", "tmp") // unwritable too
-		if code := j.commandGate(checkPhase(t, "exit 1", "fix\n{{.Review}}"), "1/1", "", promptData{}); code != exitCheck {
+		if code := j.commandGate(checkPhase(t, "exit 1", "fix\n{{.Review}}"), "1/1", "", roles.Data{}); code != exitCheck {
 			t.Fatalf("exit %d, want %d", code, exitCheck)
 		}
 		fix := readFile(t, os.Getenv("FAKE_LOG"))
