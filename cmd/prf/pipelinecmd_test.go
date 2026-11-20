@@ -12,6 +12,20 @@ import (
 	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
+// An @ask gate must follow a role, in pipeline set and in run --role.
+func TestAskPipelineValidation(t *testing.T) {
+	e := newEnv(t, "")
+	e.captureStderr()
+	for _, roles := range []string{"@ask,implement", "implement,@review,@ask"} {
+		if code := e.run(t, "pipeline", "set", "p", "--repo", "origin", "--roles", roles); code != job.ExitUsage {
+			t.Errorf("pipeline set %s: exit %d, want %d", roles, code, job.ExitUsage)
+		}
+	}
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "@ask"); code != job.ExitUsage {
+		t.Errorf("run --role @ask: exit %d, want %d", code, job.ExitUsage)
+	}
+}
+
 // roleSteps makes steps with no model.
 func roleSteps(names ...string) []pipeline.Step {
 	steps := make([]pipeline.Step, len(names))

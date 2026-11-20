@@ -105,3 +105,20 @@ func TestStatusCommand(t *testing.T) {
 		t.Errorf("no jobs as JSON = %q, want []", out)
 	}
 }
+
+func TestAskStatus(t *testing.T) {
+	s := state.Job{State: state.Ask, Stage: "@ask", Step: 2, Models: []string{"", "opus"}, ReviewURL: "http://127.0.0.1:1/x/"}
+	if got := stageOf(s); got != "ask (waiting for owner)" {
+		t.Errorf("stageOf = %q", got)
+	}
+	if got := detailOf(s); got != s.ReviewURL {
+		t.Errorf("detailOf = %q", got)
+	}
+}
+
+func TestPausedStatus(t *testing.T) {
+	s := state.Job{State: state.Paused, Stage: "test", Step: 2, ResumeAt: time.Date(2026, 1, 2, 15, 4, 0, 0, time.Local)}
+	if got := detailOf(s); got != "usage limit; step re-runs at Jan 2 3:04pm" {
+		t.Errorf("detailOf = %q", got)
+	}
+}
