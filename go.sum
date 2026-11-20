@@ -1,5 +1,5 @@
-github.com/chrisrob11/gosloplint v0.2.0 h1:kbgDLEFhEIUOfY0fXMmqtIoe33zR1bMH5DGAQu1ZRFM=
-github.com/chrisrob11/gosloplint v0.2.0/go.mod h1:vmjYjNWT3wrRqAKk3CZKcqCO9PsDfcdghZd2R5u4x6I=
+github.com/chrisrob11/gosloplint v0.3.0 h1:Y6+KLh+d5fNaI1VMexZVDSmYoAltWtPcG+9++Xc8HyI=
+github.com/chrisrob11/gosloplint v0.3.0/go.mod h1:vmjYjNWT3wrRqAKk3CZKcqCO9PsDfcdghZd2R5u4x6I=
 github.com/google/go-cmp v0.6.0 h1:ofyhxvXcZhMsU5ulbFiLKl/XBFqE1GSq7atu8tAmTRI=
 github.com/google/go-cmp v0.6.0/go.mod h1:17dUlkBOakJ0+DkrSSNjCkIjxS6bF9zb3elmeNGIjoY=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
