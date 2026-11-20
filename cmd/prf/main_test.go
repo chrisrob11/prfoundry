@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,33 +26,12 @@ import (
 // fakeClaude logs each call as "cwd\nargs\n---\n", and the mise trust paths
 // it saw in <log>.mise, then speaks stream-json: a tool call, a message, a
 // $0.05 result. By prompt: FAIL exits 1; ERROR reports an error but exits 0;
-// BUDGET stops at its budget; SLOW takes half a second; ASK writes a question
-// to $FAKE_ASK_PATH ($PRF_TMP/stop.md if unset) while $FAKE_ASKS counts down
-// above zero, and ANSWER deletes it; LIMIT hits the usage limit likewise with
-// $FAKE_LIMITS; COMMIT commits to fixed.txt; DIRTY leaves seven untracked
-// files; one holding $FAKE_FAIL_ON, if set, fails like FAIL.
+// BUDGET stops at its budget; SLOW takes half a second; COMMIT commits to
+// fixed.txt; one holding $FAKE_FAIL_ON, if set, fails like FAIL.
 const fakeClaude = `#!/bin/sh
 printf '%s\n%s\n---\n' "$(pwd)" "$*" >> "$FAKE_LOG"
-FAKE_ASK_PATH=${FAKE_ASK_PATH:-$PRF_TMP/stop.md}
 echo "$MISE_TRUSTED_CONFIG_PATHS" >> "$FAKE_LOG.mise"
-case "$2" in *ASK*)
-  n=$(cat "$FAKE_ASKS" 2>/dev/null || echo 0)
-  if [ "$n" -gt 0 ]; then
-    echo $((n - 1)) > "$FAKE_ASKS"
-    mkdir -p "$(dirname "$FAKE_ASK_PATH")"
-    printf '# Which way?\n\nSee README.md:1.\n\n- (a) left (Recommended)\n- (b) right\n' > "$FAKE_ASK_PATH"
-  fi;;
-esac
-case "$2" in *ANSWER*) rm -f "$FAKE_ASK_PATH";; esac
-case "$2" in *LIMIT*)
-  n=$(cat "$FAKE_LIMITS" 2>/dev/null || echo 0)
-  if [ "$n" -gt 0 ]; then
-    echo $((n - 1)) > "$FAKE_LIMITS"
-    printf '%s\n' '{"type":"result","is_error":true,"result":"You'"'"'ve hit your 5-hour limit · resets 3pm (UTC)","num_turns":1,"total_cost_usd":0}'; exit 1
-  fi;;
-esac
 case "$2" in *COMMIT*) echo x >> fixed.txt && git add fixed.txt && git commit -qm "fix: fake";; esac
-case "$2" in *DIRTY*) for i in 1 2 3 4 5 6 7; do echo x > dirty$i.txt; done;; esac
 if [ -n "$FAKE_FAIL_ON" ]; then case "$2" in *"$FAKE_FAIL_ON"*)
   printf '%s\n' '{"type":"result","is_error":true,"result":"it broke","num_turns":2,"total_cost_usd":0.01}'; exit 1;;
 esac; fi
@@ -892,6 +872,38 @@ func TestCostCaps(t *testing.T) {
 			t.Errorf("status:\n%s", b)
 		}
 	})
+}
+
+// run passes conf.json's max_disk_percent on to the job, which refuses to
+// clone onto a disk that full.
+func TestRunTakesMaxDiskFromConfig(t *testing.T) {
+	e := newEnv(t, `"max_disk_percent": 90`)
+	e.captureStderr()
+	e.h.rt.Statfs = func(_ string, st *syscall.Statfs_t) error {
+		st.Blocks, st.Bfree, st.Bavail = 100, 10, 5
+		return nil
+	}
+	code, msg := e.runErr(t, "run", "--repo", e.origin, "--branch", "b", "--prompt", "x", "--role", "review")
+	if code != job.ExitSetup || !strings.Contains(msg, "at or above max_disk_percent (90%)") {
+		t.Fatalf("exit %d, want %d: %s", code, job.ExitSetup, msg)
+	}
+	if n := len(e.calls(t)); n != 0 {
+		t.Errorf("ran %d steps on a full disk", n)
+	}
+}
+
+// run holds a role step that sets no expect to pipeline.json's.
+func TestRunTakesTheRepoExpect(t *testing.T) {
+	e := newEnv(t, "")
+	logs := e.captureStderr()
+	writeRole(t, e.roles, "plain", "plain on {{.Branch}}")
+	writeFileT(t, filepath.Join(e.home, "origin", pipeline.FileName), `{"default": "p", "expect": "commits", "pipelines": {"p": ["plain"]}}`)
+	if code := e.run(t, "run", "--repo", e.origin, "--branch", "b"); code != job.ExitExpect {
+		t.Fatalf("exit %d, want %d\n%s", code, job.ExitExpect, logs.String())
+	}
+	if !strings.Contains(logs.String(), "expected commits, but it made no commits") {
+		t.Errorf("log:\n%s", logs.String())
+	}
 }
 
 // run writes <job>/mise.toml and seeds the job folder before the first step,

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/chrisrob11/prfoundry/internal/pipeline"
 )
 
 func TestCloneRepo(t *testing.T) {
@@ -80,6 +82,64 @@ func TestSwitchBranchLocal(t *testing.T) {
 	}
 	if got, err := gitOut(dir, "log", "-1", "--format=%s"); err != nil || got != "on existing" {
 		t.Errorf("switched to a new branch instead of the local one: HEAD = %q, %v", got, err)
+	}
+}
+
+// fakeStatfs makes every existing path a filesystem with these block
+// counts, and records the paths asked about.
+func fakeStatfs(rt *Runtime, blocks, bfree, bavail uint64) *[]string {
+	var asked []string
+	rt.Statfs = func(path string, st *syscall.Statfs_t) error {
+		asked = append(asked, path)
+		if _, err := os.Stat(path); err != nil {
+			return syscall.ENOENT
+		}
+		st.Blocks, st.Bfree, st.Bavail = blocks, bfree, bavail
+		return nil
+	}
+	return &asked
+}
+
+func TestDiskCheck(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		limit   int
+		want    int
+		wantErr string
+	}{
+		{"over the limit", 90, ExitSetup, "is 95% full, at or above max_disk_percent (90%) in conf.json"},
+		{"under the limit", 95, 0, ""}, // 90 of 95 usable blocks is 94.7%
+		{"off", 0, 0, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tj := newTestJob(t, pipeline.Step{Role: "review"})
+			tj.o.Task, tj.clone.MaxDisk = "x", tt.limit
+			asked := fakeStatfs(&tj.o.Runtime, 100, 10, 5)
+			err := tj.runErr(t)
+			if code := exitOf(t, err); code != tt.want {
+				t.Fatalf("exit %d, want %d: %v", code, tt.want, err)
+			}
+			workdir := tj.o.Workdir
+			if tt.want != 0 {
+				if msg := err.Error(); !strings.Contains(msg, "the disk holding "+workdir+" ") || !strings.Contains(msg, tt.wantErr) {
+					t.Errorf("message = %q, want the workdir and %q", msg, tt.wantErr)
+				}
+				if _, err := os.Stat(filepath.Join(workdir, "origin", "b")); err == nil {
+					t.Error("refused, but made the job folder anyway")
+				}
+				if n := len(tj.calls(t)); n != 0 {
+					t.Errorf("ran %d steps on a full disk", n)
+				}
+			} else if n := len(tj.calls(t)); n != 1 {
+				t.Errorf("ran %d steps, want 1", n)
+			}
+			switch {
+			case tt.limit == 0 && len(*asked) != 0:
+				t.Errorf("checked the disk with the check off: %v", *asked)
+			case tt.limit != 0 && (len(*asked) != 2 || (*asked)[0] != workdir || (*asked)[1] != tj.root):
+				t.Errorf("should try the workdir, then its nearest parent that exists: %v", *asked)
+			}
+		})
 	}
 }
 
