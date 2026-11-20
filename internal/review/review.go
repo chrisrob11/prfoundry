@@ -83,6 +83,8 @@ type Round struct {
 }
 
 // replyLine is how the fix role answers a comment: "#3: renamed it".
+//
+//gosloplint:ignore narration:history the quoted text is an example reply, not history
 var replyLine = regexp.MustCompile(`(?m)^[\s*-]*#(\d+):\s*(.+)$`)
 
 // View is everything the review page shows.
